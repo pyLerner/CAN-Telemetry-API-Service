@@ -5,3 +5,4 @@ __pycache__/
 *.log
 logs/
 NMEA-API-Service/
+NMEA-API-Service

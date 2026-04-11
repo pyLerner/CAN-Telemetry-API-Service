@@ -42,20 +42,22 @@ uv run python src/main.py --config etc/telemetry-provider.toml
 
 Пример: [etc/telemetry-provider.toml](etc/telemetry-provider.toml).
 
+**Полный справочник по каждому параметру, устареванию кэша, throttle и пошаговое подключение новой спецификации CAN / настройка `[Mapping]`:** [doc/CONFIGURATION.md](doc/CONFIGURATION.md).
+
+Кратко по секциям:
+
 | Секция | Назначение |
 |--------|------------|
-| `[API]` | `Host`, `HTTP_Port` (по умолчанию **7080**), `Workers` (для кэша в памяти фактически используется **1**) |
-| `[System]` | `LogDir`, **`DisableCan`** |
-| `[CAN]` | `Interface`, `Channel`, `Bitrate`, **`Profile`** (`bus-fms` подставляет 250000), **`Decoder`** |
-| `[Cache]` | устаревание данных, число дверей, опционально throttle по PGN |
-| `[Telemetry]` | **`TemperatureMode`** = `can` или `simulated` (дрейф по спецификации API) |
-| `[Mapping]` | интерпретирует выбранный декодер (`dbc_path`, `signal_map`, …) |
+| `[API]` | HTTP: `Host`, `HTTP_Port` (**7080**), `Workers` (для in-memory кэша эффективно **1**) |
+| `[System]` | `LogDir`, `ProgramDirectory`, **`DisableCan`** |
+| `[CAN]` | SocketCAN (`Interface`, `Channel`, `Bitrate`, `FD`), **`Profile`**, **`Decoder`**, `ReceiveTimeout` |
+| `[Cache]` | `StaleAfterSeconds`, двери, `CoalesceByFrame`, throttle (`MinIntervalPerPgnMs`, `ProcessEveryNFrames`) |
+| `[Telemetry]` | **`TemperatureMode`**: `can` / `simulated` и параметры симуляции |
+| `[Mapping]` | Данные для активного декодера (`dbc_path`, `signal_map`, …) |
 
 ### Декодеры (`[CAN].Decoder`)
 
-Встроенные имена: `noop`, `bus-fms`, `dbc` (см. `vehicle_can/decoders/registry.py`). Можно указать класс по FQN: `my_pkg.decoders.foo:MyDecoder`.
-
-Смена спецификации CAN: добавить модуль в `vehicle_can/decoders/`, зарегистрировать в реестре **или** указать FQN, поменять **`Decoder`** и при необходимости **`[Mapping]`**.
+Встроенные имена: `noop`, `bus-fms`, `dbc` (см. `vehicle_can/decoders/registry.py`). Альтернатива — FQN класса: `my_pkg.decoders.foo:MyDecoder`. Подробности — в [doc/CONFIGURATION.md](doc/CONFIGURATION.md).
 
 ## HTTP API
 

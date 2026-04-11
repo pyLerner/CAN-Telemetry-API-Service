@@ -1,0 +1,44 @@
+[API]
+Host = "0.0.0.0"
+HTTP_Port = 7080
+Workers = 1
+
+[System]
+ProgramDirectory = "/usr/local/can-telemetry"
+LogDir = "logs"
+DisableCan = false
+
+[CAN]
+Interface = "socketcan"
+Channel = "can0"
+Profile = "bus-fms"
+Bitrate = 250000
+FD = false
+Decoder = "noop"
+ReceiveTimeout = 0.5
+
+[Cache]
+StaleAfterSeconds = 30.0
+DefaultDoorState = "unknown"
+CoalesceByFrame = true
+DoorCount = 4
+# MinIntervalPerPgnMs = 100
+# ProcessEveryNFrames = 1
+
+[Telemetry]
+TemperatureMode = "simulated"
+SimTargetInside = 22.0
+SimTargetOutside = 15.0
+SimTickSeconds = 5.0
+SimStepC = 0.1
+SimMaxDriftC = 2.0
+
+# Example: DBC-based decoding (use Decoder = "dbc" or "bus-fms")
+# [Mapping]
+# dbc_path = "/path/to/vehicle.dbc"
+# [Mapping.signal_map]
+# door_1 = "Door1Open"
+# door_2 = "Door2Open"
+# reverse = "ReverseGear"
+# inside = "CabinTemp"
+# outside = "AmbientTemp"

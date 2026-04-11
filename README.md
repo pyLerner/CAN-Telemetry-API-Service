@@ -69,3 +69,5 @@ uv run python src/main.py --config etc/telemetry-provider.toml
 uv sync --group dev
 uv run pytest -v
 ```
+
+Отдельный файл (как в NMEA): `uv run tests/test_api_endpoints.py -v` — под капотом `python -m pytest` для этого файла, в начале добавляется `src` в `PYTHONPATH`.

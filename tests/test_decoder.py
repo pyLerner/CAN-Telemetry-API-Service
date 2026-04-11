@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+# Allow `uv run tests/test_decoder.py` (plain Python); pytest sets pythonpath via pyproject.toml.
+_proj_root = Path(__file__).resolve().parents[1]
+_src_dir = _proj_root / "src"
+if str(_src_dir) not in sys.path:
+    sys.path.insert(0, str(_src_dir))
 
 import pytest
 from telemetry.cache import TelemetryCache
@@ -117,3 +124,11 @@ def test_dbc_generic_updates_cache(tiny_dbc: Path) -> None:
     asyncio.run(_run())
     assert cache._reverse is True
     assert cache._doors["1"] == "open"
+
+
+if __name__ == "__main__":
+    import subprocess
+
+    raise SystemExit(
+        subprocess.call([sys.executable, "-m", "pytest", __file__, *sys.argv[1:]])
+    )

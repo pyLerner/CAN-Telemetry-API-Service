@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+_proj_root = Path(__file__).resolve().parents[1]
+_src_dir = _proj_root / "src"
+if str(_src_dir) not in sys.path:
+    sys.path.insert(0, str(_src_dir))
+
 from datetime import datetime
 
 from starlette.testclient import TestClient
@@ -50,3 +58,11 @@ def test_kebab_case_nested(client: TestClient) -> None:
     assert r.status_code == 200
     body = r.json()
     assert not any("_" in k for k in body.keys())
+
+
+if __name__ == "__main__":
+    import subprocess
+
+    raise SystemExit(
+        subprocess.call([sys.executable, "-m", "pytest", __file__, *sys.argv[1:]])
+    )

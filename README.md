@@ -57,7 +57,9 @@ uv run python src/main.py --config etc/telemetry-provider.toml
 
 ### Декодеры (`[CAN].Decoder`)
 
-Встроенные имена: `noop`, `bus-fms`, `dbc` (см. `vehicle_can/decoders/registry.py`). Альтернатива — FQN класса: `my_pkg.decoders.foo:MyDecoder`. Подробности — в [doc/CONFIGURATION.md](doc/CONFIGURATION.md).
+Встроенные имена: `noop`, `bus-fms`, `dbc`, `t856` (см. `vehicle_can/decoders/registry.py`). Альтернатива — FQN класса: `my_pkg.decoders.foo:MyDecoder`. Подробности — в [doc/CONFIGURATION.md](doc/CONFIGURATION.md).
+
+Для Т856 используйте `Decoder = "t856"` и секции `[Mapping.temperature]`, `[Mapping.doors]`, `[Mapping.reverse]` в `kebab-case`.
 
 ## HTTP API
 

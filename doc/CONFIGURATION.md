@@ -155,6 +155,79 @@ outside = "AmbientAirTemp"
 
 Цель: сменить формат/семантику шины **без правок** HTTP-маршрутов и цикла `recv`, только новым модулем и настройками.
 
+---
+
+## Параметры T856 в `kebab-case`
+
+При `Decoder = "t856"` используются подсекции `[Mapping.temperature]`, `[Mapping.doors]`, `[Mapping.reverse]`.
+
+### `[System]`
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `debug` | bool | `false` | Включает подробное логирование декодера T856. В лог пишутся значения **после расчета/усреднения**, но **до нормализации API**. |
+
+### `[Mapping.temperature]`
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `queue-len` | int | `5` | Длина очереди для усреднения (скользящее среднее по последним значениям). |
+| `average-all-zone` | bool | `true` | Если `true`, `inside` = среднее по всем выбранным датчикам. |
+| `sensors` | `"all"` или `int[]` | `"all"` | Какие датчики салона учитывать (`1`, `2`). |
+| `interior-default-value` | float/null | `null` | Значение `inside` при неизвестных/устаревших данных CAN. `null` => поле не выводится. |
+| `exterior-default-value` | float/null | `null` | Значение `outside` при неизвестных/устаревших данных CAN. `null` => поле не выводится. |
+| `interior-normalize-min` | float | `-40` | Нижняя граница нормализации `inside` на API-слое. |
+| `interior-normalize-max` | float | `210` | Верхняя граница нормализации `inside` на API-слое. |
+| `interior-normalize-fallback-min` | float | `-50` | Значение `inside` в API, если ниже `interior-normalize-min`. |
+| `interior-normalize-fallback-max` | float | `250` | Значение `inside` в API, если выше `interior-normalize-max`. |
+| `exterior-normalize-min` | float | `-40` | Нижняя граница нормализации `outside` на API-слое. |
+| `exterior-normalize-max` | float | `210` | Верхняя граница нормализации `outside` на API-слое. |
+| `exterior-normalize-fallback-min` | float | `-50` | Значение `outside` в API, если ниже `exterior-normalize-min`. |
+| `exterior-normalize-fallback-max` | float | `250` | Значение `outside` в API, если выше `exterior-normalize-max`. |
+
+Правило валидации:
+- если `average-all-zone=false` и при этом `sensors` содержит несколько датчиков, это ошибка конфигурации. Декодер пишет ошибку в лог и принудительно включает `average-all-zone=true`.
+
+### `[Mapping.reverse]`
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `reverse-code` | int | `124` | Код ETC2 для `reverse=true`. Все остальные коды дают `reverse=false`. |
+
+### `[Mapping.doors]`
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `open-when-not-closed` | bool | `true` | Для T856 все состояния двери, кроме `закрыта`, считаются `open`. |
+
+Пример:
+
+```toml
+[System]
+debug = true
+
+[Mapping.temperature]
+queue-len = 5
+average-all-zone = true
+sensors = "all"
+interior-default-value = null
+exterior-default-value = null
+interior-normalize-min = -40
+interior-normalize-max = 210
+interior-normalize-fallback-min = -50
+interior-normalize-fallback-max = 250
+exterior-normalize-min = -40
+exterior-normalize-max = 210
+exterior-normalize-fallback-min = -50
+exterior-normalize-fallback-max = 250
+
+[Mapping.doors]
+open-when-not-closed = true
+
+[Mapping.reverse]
+reverse-code = 124
+```
+
 ### Шаг 0. Выбор пути: только DBC или свой декодер
 
 - Если данные описываются **существующим DBC** (J1939 / Bus-FMS / OEM) и достаточно сопоставить сигналы полям API — используйте **`Decoder = "dbc"`** или **`bus-fms`**, раскомментируйте и заполните **`[Mapping]`** (см. подпроцедуру ниже). Код в репозитории менять не нужно.

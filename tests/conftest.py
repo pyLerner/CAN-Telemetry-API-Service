@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Ensure `src` is importable when this file is loaded outside pytest (e.g. `python tests/conftest.py`).
+_root = Path(__file__).resolve().parents[1]
+_src_dir = str(_root / "src")
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
 import asyncio
 import logging
 from collections.abc import Generator
@@ -24,6 +33,7 @@ def _make_cfg() -> AppConfig:
             program_directory="/tmp",
             log_dir="logs",
             disable_can=True,
+            debug=False,
         ),
         can=CanConfig(
             interface="socketcan",
@@ -74,7 +84,7 @@ def logger() -> logging.Logger:
 
 @pytest.fixture
 def cache(app_config: AppConfig) -> TelemetryCache:
-    return TelemetryCache(app_config.cache, app_config.telemetry)
+    return TelemetryCache(app_config.cache, app_config.telemetry, app_config.mapping)
 
 
 @pytest.fixture
@@ -99,8 +109,17 @@ async def _seed_doors(cache: TelemetryCache) -> None:
 
 @pytest.fixture
 def client_seeded(app_config: AppConfig, logger: logging.Logger) -> Generator[TestClient, None, None]:
-    cache = TelemetryCache(app_config.cache, app_config.telemetry)
+    cache = TelemetryCache(app_config.cache, app_config.telemetry, app_config.mapping)
     asyncio.run(_seed_doors(cache))
     app = create_app(app_config, cache, logger)
     with TestClient(app) as c:
         yield c
+
+
+if __name__ == "__main__":
+    # Running this file only loads fixtures; it does not execute tests. `-v` is not pytest's verbose.
+    print(
+        "conftest.py only registers pytest fixtures; it is not a test runner.\n"
+        "Run tests: uv run pytest tests/ -v",
+        file=sys.stderr,
+    )

@@ -28,11 +28,13 @@ async def main_async(args: argparse.Namespace) -> None:
     Path(cfg.system.log_dir).mkdir(parents=True, exist_ok=True)
     log_file = Path(cfg.system.log_dir) / "can-telemetry.log"
     logger = setup_logger(log_file)
+    if cfg.system.debug:
+        logger.setLevel("DEBUG")
 
     logger.info("=== CAN Telemetry API starting ===")
     logger.info("Config: %s | decoder=%s | disable_can=%s", config_path, cfg.can.decoder, cfg.system.disable_can)
 
-    cache = TelemetryCache(cfg.cache, cfg.telemetry)
+    cache = TelemetryCache(cfg.cache, cfg.telemetry, cfg.mapping)
     decoder = build_decoder(cfg)
     bus = None
     if not cfg.system.disable_can:

@@ -9,6 +9,7 @@ from vehicle_can.decoders.base import CanTelemetryDecoder
 from vehicle_can.decoders.bus_fms import BusFmsDecoder
 from vehicle_can.decoders.dbc_generic import DbcGenericDecoder
 from vehicle_can.decoders.noop import NoopDecoder
+from vehicle_can.decoders.t856 import T856Decoder
 
 BUILTIN_DECODERS: dict[str, Type[CanTelemetryDecoder]] = {
     "noop": NoopDecoder,
@@ -16,6 +17,7 @@ BUILTIN_DECODERS: dict[str, Type[CanTelemetryDecoder]] = {
     "bus_fms": BusFmsDecoder,
     "dbc": DbcGenericDecoder,
     "dbc-generic": DbcGenericDecoder,
+    "t856": T856Decoder,
 }
 
 
@@ -39,5 +41,9 @@ def load_decoder_class(name_or_fqn: str) -> Type[CanTelemetryDecoder]:
 def build_decoder(cfg: AppConfig) -> CanTelemetryDecoder:
     cls = load_decoder_class(cfg.can.decoder)
     dec: Any = cls()
-    dec.configure(cfg.mapping)
+    mapping = dict(cfg.mapping)
+    system_cfg = dict(mapping.get("_system", {}))
+    system_cfg["debug"] = cfg.system.debug
+    mapping["_system"] = system_cfg
+    dec.configure(mapping)
     return dec  # type: ignore[return-value]

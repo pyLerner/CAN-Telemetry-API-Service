@@ -1,7 +1,8 @@
 [Unit]
 Description=Сервис запуска табло  API-CAN
-After=network.target
+After=network.target can0-setup.service
 Wants=network.target
+Requires=can0-setup.service
 
 [Service]
 Type=simple
@@ -10,13 +11,13 @@ Group=teamhd
 WorkingDirectory=/home/teamhd/CAN-Telemetry
 ExecStart=/home/teamhd/CAN-Telemetry/can-telemetry.run
 Restart=always
-RestartSec=5
+RestartSec=3
 StandardOutput=journal
 StandardError=journal
 # Environment=KEY=VALUE
-# Права для CAN
-AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
-CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+# Права для CAN-raw сокетов (настройка интерфейса вынесена в can0-setup.service)
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 NoNewPrivileges=true
 
 [Install]

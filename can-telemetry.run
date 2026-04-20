@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -euo pipefail
+
+PATH="/home/teamhd/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+export PATH
+
+UV_BIN="$(command -v uv)"
+
+DIR=$(dirname $(realpath $0))
+cd $DIR
+
+exec "${UV_BIN}" run src/main.py --config etc/telemetry-provider.toml

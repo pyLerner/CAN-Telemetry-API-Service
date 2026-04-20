@@ -1,0 +1,23 @@
+[Unit]
+Description=Сервис запуска табло  API-CAN
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=teamhd
+Group=teamhd
+WorkingDirectory=/home/teamhd/CAN-Telemetry
+ExecStart=/home/teamhd/CAN-Telemetry/can-telemetry.run
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+# Environment=KEY=VALUE
+# Права для CAN
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -7,8 +7,9 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+USER=teamhd
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="/home/teamhd/CAN-Telemetry"
+APP_DIR="/home/${USER}/CAN-Telemetry"
 SYSTEMD_DIR="/etc/systemd/system"
 
 echo "[1/6] Sync project to ${APP_DIR}"
@@ -18,7 +19,11 @@ mkdir -p "${APP_DIR}"
 #   --exclude ".venv" \
 #   --exclude "__pycache__" \
 #   "${SCRIPT_DIR}/" "${APP_DIR}/"
-git clone https://github.com/teamhd/CAN-Telemetry.git "${APP_DIR}"
+
+git clone https://github.com/pyLerner/CAN-Telemetry-API-Service.git "${APP_DIR}"
+
+chown -R ${USER}:${USER} "${APP_DIR}"
+
 cd "${APP_DIR}"
 git checkout T856
 git pull

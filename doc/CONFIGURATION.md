@@ -194,6 +194,17 @@ outside = "AmbientAirTemp"
 |----------|-----|--------------|----------|
 | `reverse-code` | int | `124` | Код ETC2 для `reverse=true`. Все остальные коды дают `reverse=false`. |
 
+### `[Mapping.ids]`
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `doors` | `int|string|array` | `0x18FF6527` | ID кадров для дверей. Поддерживаются десятичные и hex-строки (`"0x1BFFD880"`). |
+| `io` | `int|string|array` | `0x18FF6427` | ID кадров для IO/передачи (поле `reverse`). |
+| `temperatures1` | `int|string|array` | `0x18FF6227` | ID кадров для блока температур T856. |
+| `match-mode` | `arbitration-id` \| `pgn` | `arbitration-id` | Режим сопоставления: точный CAN ID или совпадение по J1939 PGN (игнорирует Source Address). |
+
+Примечание: это нужно для случаев, когда в реальной шине тот же PGN передается с другим SA/ID, чем в базовой спецификации.
+
 ### `[Mapping.doors]`
 
 | Параметр | Тип | По умолчанию | Описание |
@@ -223,6 +234,12 @@ exterior-normalize-fallback-max = 250
 
 [Mapping.doors]
 open-when-not-closed = true
+
+[Mapping.ids]
+doors = ["0x18FF6527"]
+io = ["0x18FF6427"]
+temperatures1 = ["0x18FF6227"]
+match-mode = "arbitration-id"
 
 [Mapping.reverse]
 reverse-code = 124

@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+"""
+ARCHIVED DECODER (BY DOC):
+- This implementation follows the door bitfield interpretation from
+  doc/Согласование_телеметрии_Т856_Нижний_Новгород_v1_2026_03_10.pdf.
+- It is archived and not used in production because real dumps
+  (can0-doors-dump.txt and can0-doors-dump-2.txt) show door bitmappings
+  that do not match the document model.
+"""
+
 import logging
 from collections import deque
 from collections.abc import Iterable
@@ -13,13 +22,6 @@ log = logging.getLogger("can-telemetry.t856")
 
 class T856Decoder:
     """
-    Door mapping note (empirical):
-    - This decoder uses real field dumps for 0x1BFFD880 from can0-doors-dump*.txt.
-    - Door state is decoded from code bytes (default: payload byte 0), where
-      0x88 means "all doors open" and 0x38/0x4C/0x60 mean "all doors close".
-    - The bitfield model from the formal T856 document is kept in archived file
-      t856.py.bydoc.arvhived and is not used in production for this vehicle.
-
     Decoder for T856 requirements:
     - 0x18FF6227 Temperatures1
     - 0x18FF6427 IO (reverse)
@@ -42,15 +44,9 @@ class T856Decoder:
         self._temperature_ids: set[int] = {self._ID_TEMPERATURES1}
         self._io_ids: set[int] = {self._ID_IO}
         self._door_ids: set[int] = {self._ID_DOORS}
-        self._door_count = 4
-        self._door_probe_bytes: list[int] = [0]
-        self._door_open_codes: set[int] = {0x88}
-        self._door_close_codes: set[int] = {0x38, 0x4C, 0x60}
-        self._door_unknown_state = "unknown"
 
     def configure(self, mapping: dict[str, Any]) -> None:
         temp_cfg = _as_dict(mapping.get("temperature"))
-        door_cfg = _as_dict(mapping.get("doors"))
         ids_cfg = _as_dict(mapping.get("ids"))
         reverse_cfg = _as_dict(mapping.get("reverse"))
         system_cfg = _as_dict(mapping.get("_system"))
@@ -76,15 +72,6 @@ class T856Decoder:
         }
         self._outside_queue = deque(maxlen=self._queue_len)
         self._reverse_code = int(_to_number(reverse_cfg.get("reverse-code"), 124))
-        self._door_count = max(1, int(_to_number(door_cfg.get("door-count"), 4)))
-        self._door_probe_bytes = _parse_byte_indexes(door_cfg.get("probe-bytes"), [0])
-        self._door_open_codes = _parse_code_set(door_cfg.get("open-codes"), {0x88})
-        self._door_close_codes = _parse_code_set(
-            door_cfg.get("close-codes"), {0x38, 0x4C, 0x60}
-        )
-        self._door_unknown_state = str(door_cfg.get("unknown-state", "unknown")).strip()
-        if self._door_unknown_state not in ("unknown", "open", "close"):
-            self._door_unknown_state = "unknown"
         match_mode = str(ids_cfg.get("match-mode", "arbitration-id")).strip().lower()
         if match_mode in ("arbitration-id", "pgn"):
             self._id_match_mode = match_mode
@@ -98,17 +85,11 @@ class T856Decoder:
         self._door_ids = _parse_id_set(ids_cfg.get("doors"), self._ID_DOORS)
         if self._debug:
             log.debug(
-                "T856 ID mapping configured: mode=%s doors=%s io=%s temperatures1=%s "
-                "door_count=%s probe_bytes=%s open_codes=%s close_codes=%s unknown=%s",
+                "T856 ID mapping configured: mode=%s doors=%s io=%s temperatures1=%s",
                 self._id_match_mode,
                 sorted(hex(i) for i in self._door_ids),
                 sorted(hex(i) for i in self._io_ids),
                 sorted(hex(i) for i in self._temperature_ids),
-                self._door_count,
-                self._door_probe_bytes,
-                sorted(hex(i) for i in self._door_open_codes),
-                sorted(hex(i) for i in self._door_close_codes),
-                self._door_unknown_state,
             )
 
     def decode_frame(self, msg: Any, cache: TelemetryCache) -> None:
@@ -132,7 +113,6 @@ class T856Decoder:
     def _decode_temperatures1(self, data: bytes, cache: TelemetryCache) -> None:
         if len(data) < 6:
             return
-        # 8-bit values, 1 C/bit with offset -40
         sensor_raw = {
             1: float(int(data[1]) - 40),
             2: float(int(data[2]) - 40),
@@ -142,7 +122,6 @@ class T856Decoder:
             if q is not None:
                 q.append(val)
 
-        # 16-bit external temperature, factor 0.03125, offset -273
         outside_raw = int.from_bytes(data[4:6], byteorder="little", signed=False)
         outside = float(outside_raw) * 0.03125 - 273.0
         self._outside_queue.append(outside)
@@ -154,58 +133,19 @@ class T856Decoder:
         if outside_avg is not None:
             cache.set_temperature("outside", outside_avg)
 
-        if self._debug:
-            log.debug(
-                "T856 Temperatures1 raw-computed values before normalization: "
-                "inside=%s outside=%s sensors=%s",
-                inside_avg,
-                outside_avg,
-                sensor_raw,
-            )
-
     def _decode_io(self, data: bytes, cache: TelemetryCache) -> None:
         if len(data) < 5:
             return
         gear_code = int(data[4])
-        is_reverse = gear_code == self._reverse_code
-        cache.set_reverse(is_reverse)
-        if self._debug:
-            log.debug(
-                "T856 IO raw-computed values: gear_code=%s reverse=%s",
-                gear_code,
-                is_reverse,
-            )
+        cache.set_reverse(gear_code == self._reverse_code)
 
     def _decode_doors(self, data: bytes, cache: TelemetryCache) -> None:
-        if len(data) < 1:
+        if len(data) < 6:
             return
-        samples = [data[idx] for idx in self._door_probe_bytes if idx < len(data)]
-        if not samples:
-            return
-
-        state = self._decode_global_door_state(samples)
-        for door in range(1, self._door_count + 1):
+        for door in range(1, 9):
+            closed_bit = _door_status(data, door, "closed")
+            state = "close" if closed_bit else "open"
             cache.set_door(str(door), state)
-            if self._debug:
-                log.debug(
-                    "T856 Doors raw-computed values: door=%s samples=%s api_state=%s",
-                    door,
-                    [hex(v) for v in samples],
-                    state,
-                )
-
-    def _decode_global_door_state(self, samples: list[int]) -> str:
-        open_hits = sum(1 for code in samples if code in self._door_open_codes)
-        close_hits = sum(1 for code in samples if code in self._door_close_codes)
-        if open_hits > close_hits:
-            return "open"
-        if close_hits > open_hits:
-            return "close"
-        if open_hits > 0:
-            return "open"
-        if close_hits > 0:
-            return "close"
-        return self._door_unknown_state
 
     def _compute_inside_average(self) -> float | None:
         if self._average_all_zone:
@@ -275,39 +215,23 @@ def _parse_id(value: Any) -> int | None:
     return None
 
 
-def _parse_code_set(raw: Any, default: set[int]) -> set[int]:
-    if raw is None:
-        return set(default)
-    if isinstance(raw, (int, str)):
-        parsed = {_parse_id(raw)}
-    elif isinstance(raw, Iterable) and not isinstance(raw, (bytes, dict)):
-        parsed = {_parse_id(item) for item in raw}
-    else:
-        parsed = set()
-    out = {v for v in parsed if v is not None and 0 <= v <= 0xFF}
-    return out or set(default)
-
-
-def _parse_byte_indexes(raw: Any, default: list[int]) -> list[int]:
-    if raw is None:
-        return list(default)
-    values: list[int] = []
-    if isinstance(raw, (int, str)):
-        parsed = _parse_id(raw)
-        if parsed is not None:
-            values = [parsed]
-    elif isinstance(raw, Iterable) and not isinstance(raw, (bytes, dict)):
-        for item in raw:
-            parsed = _parse_id(item)
-            if parsed is None:
-                continue
-            values.append(parsed)
-    out = sorted({v for v in values if 0 <= v <= 7})
-    return out or list(default)
-
-
 def _avg(values: Iterable[float]) -> float | None:
     vals = list(values)
     if not vals:
         return None
     return sum(vals) / len(vals)
+
+
+def _door_status(data: bytes, door_idx: int, kind: str) -> bool:
+    if door_idx < 1 or door_idx > 8:
+        return False
+    if door_idx <= 4:
+        byte_base = {"opening": 0, "closed": 1, "closing": 2}[kind]
+        shift = (door_idx - 1) * 2
+    else:
+        byte_base = {"opening": 3, "closed": 4, "closing": 5}[kind]
+        shift = (door_idx - 5) * 2
+    if byte_base >= len(data):
+        return False
+    field = (data[byte_base] >> shift) & 0b11
+    return field == 1

@@ -45,5 +45,6 @@ def build_decoder(cfg: AppConfig) -> CanTelemetryDecoder:
     system_cfg = dict(mapping.get("_system", {}))
     system_cfg["debug"] = cfg.system.debug
     mapping["_system"] = system_cfg
+    mapping["_cache"] = {"door-count": cfg.cache.door_count}
     dec.configure(mapping)
     return dec  # type: ignore[return-value]

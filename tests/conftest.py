@@ -48,7 +48,7 @@ def _make_cfg() -> AppConfig:
             stale_after_seconds=3600.0,
             default_door_state="unknown",
             coalesce_by_frame=True,
-            door_count=4,
+            door_count=6,
             min_interval_per_pgn_ms=None,
             process_every_n_frames=None,
         ),
@@ -100,10 +100,16 @@ def client(app) -> Generator[TestClient, None, None]:
 
 async def _seed_doors(cache: TelemetryCache) -> None:
     async with cache.lock:
-        cache.set_door("1", "close")
-        cache.set_door("2", "open")
-        cache.set_door("3", "close")
-        cache.set_door("4", "close")
+        states = {
+            "1": "close",
+            "2": "open",
+            "3": "close",
+            "4": "close",
+            "5": "open",
+            "6": "close",
+        }
+        for door_id, state in states.items():
+            cache.set_door(door_id, state)
         cache.set_reverse(False)
 
 

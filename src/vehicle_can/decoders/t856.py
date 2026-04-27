@@ -13,12 +13,14 @@ log = logging.getLogger("can-telemetry.t856")
 
 class T856Decoder:
     """
-    Door mapping note (empirical):
-    - This decoder uses real field dumps for 0x1BFFD880 from can0-doors-dump*.txt.
-    - Door state is decoded from code bytes (default: payload byte 0), where
-      0x88 means "all doors open" and 0x38/0x4C/0x60 mean "all doors close".
-    - The bitfield model from the formal T856 document is kept in archived file
-      t856.py.bydoc.arvhived and is not used in production for this vehicle.
+    Door mapping note (empirical per-door):
+    - Per-door telemetry is decoded from 2-bit fields in bytes 0 and 4 of
+      0x1BFFD880 frames, based on 1-door..6-door field dumps.
+    - Default field layout for 6 doors:
+      door1=(byte0,shift2), door2=(byte0,shift4), door3=(byte0,shift6),
+      door4=(byte4,shift2), door5=(byte4,shift4), door6=(byte4,shift6).
+    - Default state map: field value 3 => open, values 0/1/2 => close.
+    - The old by-document model is archived in t856.py.bydoc.arvhived.
 
     Decoder for T856 requirements:
     - 0x18FF6227 Temperatures1
@@ -43,9 +45,7 @@ class T856Decoder:
         self._io_ids: set[int] = {self._ID_IO}
         self._door_ids: set[int] = {self._ID_DOORS}
         self._door_count = 4
-        self._door_probe_bytes: list[int] = [0]
-        self._door_open_codes: set[int] = {0x88}
-        self._door_close_codes: set[int] = {0x38, 0x4C, 0x60}
+        self._door_map: dict[int, DoorRule] = {}
         self._door_unknown_state = "unknown"
 
     def configure(self, mapping: dict[str, Any]) -> None:
@@ -76,12 +76,9 @@ class T856Decoder:
         }
         self._outside_queue = deque(maxlen=self._queue_len)
         self._reverse_code = int(_to_number(reverse_cfg.get("reverse-code"), 124))
-        self._door_count = max(1, int(_to_number(door_cfg.get("door-count"), 4)))
-        self._door_probe_bytes = _parse_byte_indexes(door_cfg.get("probe-bytes"), [0])
-        self._door_open_codes = _parse_code_set(door_cfg.get("open-codes"), {0x88})
-        self._door_close_codes = _parse_code_set(
-            door_cfg.get("close-codes"), {0x38, 0x4C, 0x60}
-        )
+        cache_cfg = _as_dict(mapping.get("_cache"))
+        self._door_count = max(1, int(_to_number(cache_cfg.get("door-count"), 4)))
+        self._door_map = _build_door_map(self._door_count, door_cfg.get("door-map"))
         self._door_unknown_state = str(door_cfg.get("unknown-state", "unknown")).strip()
         if self._door_unknown_state not in ("unknown", "open", "close"):
             self._door_unknown_state = "unknown"
@@ -105,9 +102,7 @@ class T856Decoder:
                 sorted(hex(i) for i in self._io_ids),
                 sorted(hex(i) for i in self._temperature_ids),
                 self._door_count,
-                self._door_probe_bytes,
-                sorted(hex(i) for i in self._door_open_codes),
-                sorted(hex(i) for i in self._door_close_codes),
+                {k: (v.byte, v.shift, sorted(v.open_values), sorted(v.close_values)) for k, v in self._door_map.items()},
                 self._door_unknown_state,
             )
 
@@ -177,33 +172,28 @@ class T856Decoder:
             )
 
     def _decode_doors(self, data: bytes, cache: TelemetryCache) -> None:
-        if len(data) < 1:
+        if len(data) < 5:
             return
-        samples = [data[idx] for idx in self._door_probe_bytes if idx < len(data)]
-        if not samples:
-            return
-
-        state = self._decode_global_door_state(samples)
         for door in range(1, self._door_count + 1):
+            state = self._decode_one_door(data, door)
             cache.set_door(str(door), state)
             if self._debug:
                 log.debug(
-                    "T856 Doors raw-computed values: door=%s samples=%s api_state=%s",
+                    "T856 Doors raw-computed values: door=%s api_state=%s",
                     door,
-                    [hex(v) for v in samples],
                     state,
                 )
 
-    def _decode_global_door_state(self, samples: list[int]) -> str:
-        open_hits = sum(1 for code in samples if code in self._door_open_codes)
-        close_hits = sum(1 for code in samples if code in self._door_close_codes)
-        if open_hits > close_hits:
+    def _decode_one_door(self, data: bytes, door_idx: int) -> str:
+        rule = self._door_map.get(door_idx)
+        if rule is None:
+            return self._door_unknown_state
+        if rule.byte >= len(data):
+            return self._door_unknown_state
+        field = (int(data[rule.byte]) >> rule.shift) & 0b11
+        if field in rule.open_values:
             return "open"
-        if close_hits > open_hits:
-            return "close"
-        if open_hits > 0:
-            return "open"
-        if close_hits > 0:
+        if field in rule.close_values:
             return "close"
         return self._door_unknown_state
 
@@ -288,22 +278,44 @@ def _parse_code_set(raw: Any, default: set[int]) -> set[int]:
     return out or set(default)
 
 
-def _parse_byte_indexes(raw: Any, default: list[int]) -> list[int]:
-    if raw is None:
-        return list(default)
-    values: list[int] = []
-    if isinstance(raw, (int, str)):
-        parsed = _parse_id(raw)
-        if parsed is not None:
-            values = [parsed]
-    elif isinstance(raw, Iterable) and not isinstance(raw, (bytes, dict)):
-        for item in raw:
-            parsed = _parse_id(item)
-            if parsed is None:
-                continue
-            values.append(parsed)
-    out = sorted({v for v in values if 0 <= v <= 7})
-    return out or list(default)
+class DoorRule:
+    def __init__(
+        self, byte: int, shift: int, open_values: set[int], close_values: set[int]
+    ) -> None:
+        self.byte = byte
+        self.shift = shift
+        self.open_values = open_values
+        self.close_values = close_values
+
+
+def _build_default_door_map(door_count: int) -> dict[int, DoorRule]:
+    slots = [(0, 2), (0, 4), (0, 6), (4, 2), (4, 4), (4, 6)]
+    out: dict[int, DoorRule] = {}
+    for door in range(1, door_count + 1):
+        byte, shift = slots[(door - 1) % len(slots)]
+        out[door] = DoorRule(byte, shift, {3}, {0, 1, 2})
+    return out
+
+
+def _build_door_map(door_count: int, raw_map: Any) -> dict[int, DoorRule]:
+    out = _build_default_door_map(door_count)
+    cfg = _as_dict(raw_map)
+    for k, v in cfg.items():
+        try:
+            door = int(str(k))
+        except ValueError:
+            continue
+        if door < 1 or door > door_count:
+            continue
+        item = _as_dict(v)
+        b = _parse_id(item.get("byte"))
+        s = _parse_id(item.get("shift"))
+        if b is None or s is None or b < 0 or b > 7 or s not in (0, 2, 4, 6):
+            continue
+        open_values = _parse_code_set(item.get("open-values"), {3})
+        close_values = _parse_code_set(item.get("close-values"), {0, 1, 2})
+        out[door] = DoorRule(b, s, {x & 0b11 for x in open_values}, {x & 0b11 for x in close_values})
+    return out
 
 
 def _avg(values: Iterable[float]) -> float | None:

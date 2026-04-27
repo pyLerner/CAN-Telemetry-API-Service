@@ -24,7 +24,7 @@ ReceiveTimeout = 0.5
 StaleAfterSeconds = 30.0
 DefaultDoorState = "unknown"
 CoalesceByFrame = true
-DoorCount = 4
+DoorCount = 6
 # MinIntervalPerPgnMs = 100
 # ProcessEveryNFrames = 1
 
@@ -66,14 +66,49 @@ exterior-normalize-fallback-min = -50
 exterior-normalize-fallback-max = 250
 
 [Mapping.doors]
-# Эмпирическая карта для 0x1BFFD880 (по can0-doors-dump*.txt):
-# 0x88 => all_open, 0x38/0x4C/0x60 => all_closed.
-# Декодер применяет глобальное состояние ко всем дверям 1..door-count.
-door-count = 4
-probe-bytes = [0]
-open-codes = ["0x88"]
-close-codes = ["0x38", "0x4C", "0x60"]
+# Эмпирическая per-door карта для 0x1BFFD880 (по 1-door..6-door.txt).
+# Единственный источник количества дверей: [Cache].DoorCount.
+# По умолчанию используются 2-битные поля:
+# d1=(byte0,shift2), d2=(byte0,shift4), d3=(byte0,shift6),
+# d4=(byte4,shift2), d5=(byte4,shift4), d6=(byte4,shift6).
+# field=3 => open, field in {0,1,2} => close.
 unknown-state = "unknown"
+
+[Mapping.doors.door-map."1"]
+byte = 0
+shift = 2
+open-values = [3]
+close-values = [0, 1, 2]
+
+[Mapping.doors.door-map."2"]
+byte = 0
+shift = 4
+open-values = [3]
+close-values = [0, 1, 2]
+
+[Mapping.doors.door-map."3"]
+byte = 0
+shift = 6
+open-values = [3]
+close-values = [0, 1, 2]
+
+[Mapping.doors.door-map."4"]
+byte = 4
+shift = 2
+open-values = [3]
+close-values = [0, 1, 2]
+
+[Mapping.doors.door-map."5"]
+byte = 4
+shift = 4
+open-values = [3]
+close-values = [0, 1, 2]
+
+[Mapping.doors.door-map."6"]
+byte = 4
+shift = 6
+open-values = [3]
+close-values = [0, 1, 2]
 
 [Mapping.ids]
 # Кадры из полевого дампа (can0-doors-dump.txt): двери и IO приходят с другими ID.

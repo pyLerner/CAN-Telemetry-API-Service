@@ -28,7 +28,8 @@ Returns service liveness status.
 ### `GET /api/telemetry/v1/doors/state`
 
 Returns current state of all doors.  
-For T856 decoder: any state except `closed` is reported as `open`.
+For T856 decoder: states are decoded per door from configured bit mapping of CAN frame
+`0x1BFFD880`. Number of doors in API response is `1..Cache.DoorCount`.
 
 **Response** `200 OK`
 
@@ -38,7 +39,9 @@ For T856 decoder: any state except `closed` is reported as `open`.
     "1": "close",
     "2": "open",
     "3": "close",
-    "4": "close"
+    "4": "close",
+    "5": "open",
+    "6": "close"
   }
 }
 ```

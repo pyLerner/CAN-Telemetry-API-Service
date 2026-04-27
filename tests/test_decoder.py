@@ -172,12 +172,9 @@ def test_t856_decoder_temperature_reverse_and_doors() -> None:
         },
         "reverse": {"reverse-code": 124},
         "doors": {
-            "door-count": 4,
-            "probe-bytes": [0],
-            "open-codes": ["0x88"],
-            "close-codes": ["0x38", "0x4C", "0x60"],
             "unknown-state": "unknown",
         },
+        "_cache": {"door-count": 4},
     }
     cache = TelemetryCache(cfg, tcfg, mapping)
     dec = T856Decoder()
@@ -197,8 +194,8 @@ def test_t856_decoder_temperature_reverse_and_doors() -> None:
     class DoorMsg:
         arbitration_id = 0x18FF6527
         is_extended_id = True
-        # Empirical mapping: code 0x88 => all doors open.
-        data = bytes([0x88, 0x7C, 0x4C, 0x7C, 0x38, 0x7C, 0x38, 0x7C])
+        # door_1 open (field(byte0,shift2)=3), others close.
+        data = bytes([0x0C, 0x7C, 0x10, 0x7C, 0x10, 0x7C, 0x10, 0x7C])
 
     import asyncio
 
@@ -211,7 +208,7 @@ def test_t856_decoder_temperature_reverse_and_doors() -> None:
     asyncio.run(_run())
     assert cache._reverse is True
     assert cache._doors["1"] == "open"
-    assert cache._doors["2"] == "open"
+    assert cache._doors["2"] == "close"
     # average before normalization = (0 + 1) / 2
     assert cache._temperatures["inside"] == pytest.approx(0.5)
 
@@ -258,12 +255,9 @@ def test_t856_decoder_accepts_configured_arbitration_ids() -> None:
     dec.configure(
         {
             "doors": {
-                "door-count": 4,
-                "probe-bytes": [0],
-                "open-codes": ["0x88"],
-                "close-codes": ["0x38", "0x4C", "0x60"],
                 "unknown-state": "unknown",
             },
+            "_cache": {"door-count": 4},
             "ids": {
                 "doors": ["0x1BFFD880"],
                 "io": ["0x1BFFD980"],
@@ -276,7 +270,7 @@ def test_t856_decoder_accepts_configured_arbitration_ids() -> None:
     class DoorMsg:
         arbitration_id = 0x1BFFD880
         is_extended_id = True
-        data = bytes([0x4C, 0x7C, 0x4C, 0x7C, 0x38, 0x7C, 0x38, 0x7C])
+        data = bytes([0x00, 0x7C, 0x10, 0x7C, 0x10, 0x7C, 0x10, 0x7C])
 
     class IoMsg:
         arbitration_id = 0x1BFFD980
@@ -317,12 +311,9 @@ def test_t856_decoder_accepts_configured_pgn_mode() -> None:
     dec.configure(
         {
             "doors": {
-                "door-count": 4,
-                "probe-bytes": [0],
-                "open-codes": ["0x88"],
-                "close-codes": ["0x38", "0x4C", "0x60"],
                 "unknown-state": "unknown",
             },
+            "_cache": {"door-count": 4},
             "ids": {
                 "doors": ["0xFF65"],
                 "match-mode": "pgn",
@@ -333,7 +324,7 @@ def test_t856_decoder_accepts_configured_pgn_mode() -> None:
     class DoorMsg:
         arbitration_id = 0x18FF6501
         is_extended_id = True
-        data = bytes([0x4C, 0x7C, 0x4C, 0x7C, 0x38, 0x7C, 0x38, 0x7C])
+        data = bytes([0x00, 0x7C, 0x10, 0x7C, 0x10, 0x7C, 0x10, 0x7C])
 
     import asyncio
 
@@ -345,12 +336,12 @@ def test_t856_decoder_accepts_configured_pgn_mode() -> None:
     assert cache._doors["1"] == "close"
 
 
-def test_t856_empirical_dump_transition_all_closed_open_closed() -> None:
+def test_t856_per_door_state_for_door_count_6() -> None:
     cfg = CacheConfig(
         stale_after_seconds=3600.0,
         default_door_state="unknown",
         coalesce_by_frame=True,
-        door_count=4,
+        door_count=6,
         min_interval_per_pgn_ms=None,
         process_every_n_frames=None,
     )
@@ -367,12 +358,9 @@ def test_t856_empirical_dump_transition_all_closed_open_closed() -> None:
     dec.configure(
         {
             "doors": {
-                "door-count": 4,
-                "probe-bytes": [0],
-                "open-codes": ["0x88"],
-                "close-codes": ["0x38", "0x4C", "0x60"],
                 "unknown-state": "unknown",
             },
+            "_cache": {"door-count": 6},
             "ids": {"doors": ["0x1BFFD880"], "match-mode": "arbitration-id"},
         }
     )
@@ -388,25 +376,23 @@ def test_t856_empirical_dump_transition_all_closed_open_closed() -> None:
 
     async def _run() -> None:
         async with cache.lock:
-            # closed (from dump pattern)
+            # baseline: all close
             dec.decode_frame(
-                DoorMsg(bytes([0x4C, 0x7C, 0x4C, 0x7C, 0x38, 0x7C, 0x38, 0x7C])),
+                DoorMsg(bytes([0x00, 0x7C, 0x10, 0x7C, 0x10, 0x7C, 0x10, 0x7C])),
                 cache,
             )
-            # open (from dump pattern)
+            # open door 2 and door 5 only:
+            # door2=(byte0,shift4), door5=(byte4,shift4)
             dec.decode_frame(
-                DoorMsg(bytes([0x88, 0x7C, 0x4C, 0x7C, 0x4C, 0x7C, 0x38, 0x7C])),
-                cache,
-            )
-            # closed again (from dump pattern)
-            dec.decode_frame(
-                DoorMsg(bytes([0x60, 0x7C, 0x4C, 0x7C, 0x38, 0x7C, 0x38, 0x7C])),
+                DoorMsg(bytes([0x30, 0x7C, 0x10, 0x7C, 0x30, 0x7C, 0x10, 0x7C])),
                 cache,
             )
 
     asyncio.run(_run())
-    for door in ("1", "2", "3", "4"):
+    for door in ("1", "3", "4", "6"):
         assert cache._doors[door] == "close"
+    assert cache._doors["2"] == "open"
+    assert cache._doors["5"] == "open"
 
 
 if __name__ == "__main__":

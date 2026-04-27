@@ -209,7 +209,17 @@ outside = "AmbientAirTemp"
 
 | Параметр | Тип | По умолчанию | Описание |
 |----------|-----|--------------|----------|
-| `open-when-not-closed` | bool | `true` | Для T856 все состояния двери, кроме `закрыта`, считаются `open`. |
+| `unknown-state` | `unknown \| open \| close` | `unknown` | Состояние для нераспознанного поля двери. |
+| `door-map."<N>".byte` | int (0..7) | авто | Индекс байта payload для двери `N`. |
+| `door-map."<N>".shift` | int (`0/2/4/6`) | авто | Сдвиг 2-битного поля двери `N` в выбранном байте. |
+| `door-map."<N>".open-values` | array[int] | `[3]` | Какие 2-битные значения считать `open`. |
+| `door-map."<N>".close-values` | array[int] | `[0,1,2]` | Какие 2-битные значения считать `close`. |
+
+Примечания:
+- Количество дверей берется только из `[Cache].DoorCount`.
+- Если `door-map` не задан, используется эмпирическая схема для 6 дверей:
+  - `d1=(byte0,shift2)`, `d2=(byte0,shift4)`, `d3=(byte0,shift6)`,
+  - `d4=(byte4,shift2)`, `d5=(byte4,shift4)`, `d6=(byte4,shift6)`.
 
 Пример:
 
@@ -233,7 +243,31 @@ exterior-normalize-fallback-min = -50
 exterior-normalize-fallback-max = 250
 
 [Mapping.doors]
-open-when-not-closed = true
+unknown-state = "unknown"
+
+[Mapping.doors.door-map."1"]
+byte = 0
+shift = 2
+open-values = [3]
+close-values = [0, 1, 2]
+
+[Mapping.doors.door-map."2"]
+byte = 0
+shift = 4
+open-values = [3]
+close-values = [0, 1, 2]
+
+[Mapping.doors.door-map."3"]
+byte = 0
+shift = 6
+open-values = [3]
+close-values = [0, 1, 2]
+
+[Mapping.doors.door-map."4"]
+byte = 4
+shift = 2
+open-values = [3]
+close-values = [0, 1, 2]
 
 [Mapping.ids]
 doors = ["0x18FF6527"]

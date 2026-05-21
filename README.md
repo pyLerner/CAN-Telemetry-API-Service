@@ -59,8 +59,8 @@ uv run python src/main.py --config etc/telemetry-provider.toml
 
 Встроенные имена: `noop`, `bus-fms`, `dbc`, `t856` (см. `vehicle_can/decoders/registry.py`). Альтернатива — FQN класса: `my_pkg.decoders.foo:MyDecoder`. Подробности — в [doc/CONFIGURATION.md](doc/CONFIGURATION.md).
 
-Для Т856 используйте `Decoder = "t856"` и секции `[Mapping.temperature]`, `[Mapping.doors]`, `[Mapping.reverse]` в `kebab-case`.  
-`[Mapping.doors]` поддерживает per-door карту (`door-map`) для независимого состояния каждой двери `1..[Cache].DoorCount`.
+Для Т856 используйте `Decoder = "t856"` и секции `[Mapping.temperature]`, `[Mapping.doors]`, `[Mapping.reverse]`, `[Mapping.ids]` в `kebab-case`.  
+Двери: CAN `0x18FF6527` по PDF §2.6; количество в API — `[Cache].DoorCount`.
 
 ## HTTP API
 

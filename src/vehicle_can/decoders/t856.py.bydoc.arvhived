@@ -2,11 +2,9 @@ from __future__ import annotations
 
 """
 ARCHIVED DECODER (BY DOC):
-- This implementation follows the door bitfield interpretation from
-  doc/Согласование_телеметрии_Т856_Нижний_Новгород_v1_2026_03_10.pdf.
-- It is archived and not used in production because real dumps
-  (can0-doors-dump.txt and can0-doors-dump-2.txt) show door bitmappings
-  that do not match the document model.
+- Door logic from doc/Согласование_телеметрии_Т856_Нижний_Новгород_v1_2026_03_10.pdf
+  is implemented in src/vehicle_can/decoders/t856.py (logs debug/20260521/).
+- This file is kept as historical reference (older API rule: close iff closed bit only).
 """
 
 import logging

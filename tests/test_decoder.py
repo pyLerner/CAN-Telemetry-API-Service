@@ -194,8 +194,8 @@ def test_t856_decoder_temperature_reverse_and_doors() -> None:
     class DoorMsg:
         arbitration_id = 0x18FF6527
         is_extended_id = True
-        # door_1 open (field(byte0,shift2)=3), others close.
-        data = bytes([0x0C, 0x7C, 0x10, 0x7C, 0x10, 0x7C, 0x10, 0x7C])
+        # door 1 open plateau from debug/20260521/1-closed-opened-closed.log
+        data = bytes.fromhex("0154000005000000")
 
     import asyncio
 
@@ -233,62 +233,6 @@ def test_t856_forces_average_all_zone_with_multiple_sensors(caplog: pytest.LogCa
     assert "Forcing average-all-zone=true" in caplog.text
 
 
-def test_t856_decoder_accepts_configured_arbitration_ids() -> None:
-    cfg = CacheConfig(
-        stale_after_seconds=3600.0,
-        default_door_state="unknown",
-        coalesce_by_frame=True,
-        door_count=4,
-        min_interval_per_pgn_ms=None,
-        process_every_n_frames=None,
-    )
-    tcfg = TelemetryConfig(
-        temperature_mode="can",
-        sim_target_inside=22.0,
-        sim_target_outside=15.0,
-        sim_tick_seconds=5.0,
-        sim_step_c=0.1,
-        sim_max_drift_c=2.0,
-    )
-    cache = TelemetryCache(cfg, tcfg, {})
-    dec = T856Decoder()
-    dec.configure(
-        {
-            "doors": {
-                "unknown-state": "unknown",
-            },
-            "_cache": {"door-count": 4},
-            "ids": {
-                "doors": ["0x1BFFD880"],
-                "io": ["0x1BFFD980"],
-                "match-mode": "arbitration-id",
-            },
-            "reverse": {"reverse-code": 124},
-        }
-    )
-
-    class DoorMsg:
-        arbitration_id = 0x1BFFD880
-        is_extended_id = True
-        data = bytes([0x00, 0x7C, 0x10, 0x7C, 0x10, 0x7C, 0x10, 0x7C])
-
-    class IoMsg:
-        arbitration_id = 0x1BFFD980
-        is_extended_id = True
-        data = bytes([0x00, 0x00, 0x00, 0x00, 124, 0x00, 0x00, 0x00])
-
-    import asyncio
-
-    async def _run() -> None:
-        async with cache.lock:
-            dec.decode_frame(DoorMsg(), cache)
-            dec.decode_frame(IoMsg(), cache)
-
-    asyncio.run(_run())
-    assert cache._doors["1"] == "close"
-    assert cache._reverse is True
-
-
 def test_t856_decoder_accepts_configured_pgn_mode() -> None:
     cfg = CacheConfig(
         stale_after_seconds=3600.0,
@@ -324,7 +268,7 @@ def test_t856_decoder_accepts_configured_pgn_mode() -> None:
     class DoorMsg:
         arbitration_id = 0x18FF6501
         is_extended_id = True
-        data = bytes([0x00, 0x7C, 0x10, 0x7C, 0x10, 0x7C, 0x10, 0x7C])
+        data = bytes.fromhex("0055000005000000")
 
     import asyncio
 
@@ -334,65 +278,6 @@ def test_t856_decoder_accepts_configured_pgn_mode() -> None:
 
     asyncio.run(_run())
     assert cache._doors["1"] == "close"
-
-
-def test_t856_per_door_state_for_door_count_6() -> None:
-    cfg = CacheConfig(
-        stale_after_seconds=3600.0,
-        default_door_state="unknown",
-        coalesce_by_frame=True,
-        door_count=6,
-        min_interval_per_pgn_ms=None,
-        process_every_n_frames=None,
-    )
-    tcfg = TelemetryConfig(
-        temperature_mode="can",
-        sim_target_inside=22.0,
-        sim_target_outside=15.0,
-        sim_tick_seconds=5.0,
-        sim_step_c=0.1,
-        sim_max_drift_c=2.0,
-    )
-    cache = TelemetryCache(cfg, tcfg, {})
-    dec = T856Decoder()
-    dec.configure(
-        {
-            "doors": {
-                "unknown-state": "unknown",
-            },
-            "_cache": {"door-count": 6},
-            "ids": {"doors": ["0x1BFFD880"], "match-mode": "arbitration-id"},
-        }
-    )
-
-    class DoorMsg:
-        is_extended_id = True
-        arbitration_id = 0x1BFFD880
-
-        def __init__(self, data: bytes) -> None:
-            self.data = data
-
-    import asyncio
-
-    async def _run() -> None:
-        async with cache.lock:
-            # baseline: all close
-            dec.decode_frame(
-                DoorMsg(bytes([0x00, 0x7C, 0x10, 0x7C, 0x10, 0x7C, 0x10, 0x7C])),
-                cache,
-            )
-            # open door 2 and door 5 only:
-            # door2=(byte0,shift4), door5=(byte4,shift4)
-            dec.decode_frame(
-                DoorMsg(bytes([0x30, 0x7C, 0x10, 0x7C, 0x30, 0x7C, 0x10, 0x7C])),
-                cache,
-            )
-
-    asyncio.run(_run())
-    for door in ("1", "3", "4", "6"):
-        assert cache._doors[door] == "close"
-    assert cache._doors["2"] == "open"
-    assert cache._doors["5"] == "open"
 
 
 if __name__ == "__main__":

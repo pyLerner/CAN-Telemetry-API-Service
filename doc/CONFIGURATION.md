@@ -198,7 +198,7 @@ outside = "AmbientAirTemp"
 
 | Параметр | Тип | По умолчанию | Описание |
 |----------|-----|--------------|----------|
-| `doors` | `int|string|array` | `0x18FF6527` | ID кадров для дверей. Поддерживаются десятичные и hex-строки (`"0x1BFFD880"`). |
+| `doors` | `int|string|array` | `0x18FF6527` | ID кадров для дверей. Поддерживаются десятичные и hex-строки. |
 | `io` | `int|string|array` | `0x18FF6427` | ID кадров для IO/передачи (поле `reverse`). |
 | `temperatures1` | `int|string|array` | `0x18FF6227` | ID кадров для блока температур T856. |
 | `match-mode` | `arbitration-id` \| `pgn` | `arbitration-id` | Режим сопоставления: точный CAN ID или совпадение по J1939 PGN (игнорирует Source Address). |
@@ -209,17 +209,16 @@ outside = "AmbientAirTemp"
 
 | Параметр | Тип | По умолчанию | Описание |
 |----------|-----|--------------|----------|
-| `unknown-state` | `unknown \| open \| close` | `unknown` | Состояние для нераспознанного поля двери. |
-| `door-map."<N>".byte` | int (0..7) | авто | Индекс байта payload для двери `N`. |
-| `door-map."<N>".shift` | int (`0/2/4/6`) | авто | Сдвиг 2-битного поля двери `N` в выбранном байте. |
-| `door-map."<N>".open-values` | array[int] | `[3]` | Какие 2-битные значения считать `open`. |
-| `door-map."<N>".close-values` | array[int] | `[0,1,2]` | Какие 2-битные значения считать `close`. |
+| `unknown-state` | `unknown \| open \| close` | `unknown` | Состояние при кадре короче 6 байт. |
 
-Примечания:
-- Количество дверей берется только из `[Cache].DoorCount`.
-- Если `door-map` не задан, используется эмпирическая схема для 6 дверей:
-  - `d1=(byte0,shift2)`, `d2=(byte0,shift4)`, `d3=(byte0,shift6)`,
-  - `d4=(byte4,shift2)`, `d5=(byte4,shift4)`, `d6=(byte4,shift6)`.
+Декодер `t856` читает сообщение **Doors `0x18FF6527`** по §2.6 PDF: на каждую дверь три 2-битных поля (*открывается*, *закрыта*, *закрывается*); значение `1` — статус активен. Количество дверей в API — только `[Cache].DoorCount` (обычно 6; двери 7–8 в CAN не отдаются).
+
+Правило API:
+
+- `close` — активна «закрыта» и нет активных «открывается»/«закрывается»;
+- `open` — активны «открывается» или «закрывается», либо «закрыта» не активна.
+
+Полевые логи: `debug/20260521/`.
 
 Пример:
 
@@ -244,30 +243,6 @@ exterior-normalize-fallback-max = 250
 
 [Mapping.doors]
 unknown-state = "unknown"
-
-[Mapping.doors.door-map."1"]
-byte = 0
-shift = 2
-open-values = [3]
-close-values = [0, 1, 2]
-
-[Mapping.doors.door-map."2"]
-byte = 0
-shift = 4
-open-values = [3]
-close-values = [0, 1, 2]
-
-[Mapping.doors.door-map."3"]
-byte = 0
-shift = 6
-open-values = [3]
-close-values = [0, 1, 2]
-
-[Mapping.doors.door-map."4"]
-byte = 4
-shift = 2
-open-values = [3]
-close-values = [0, 1, 2]
 
 [Mapping.ids]
 doors = ["0x18FF6527"]

@@ -9,6 +9,7 @@ Workers = 1
 ProgramDirectory = "/usr/local/can-telemetry"
 LogDir = "logs"
 DisableCan = false
+debug = false
 
 [CAN]
 Interface = "socketcan"
@@ -16,31 +17,67 @@ Channel = "can0"
 Profile = "bus-fms"
 Bitrate = 250000
 FD = false
-Decoder = "noop"
+Decoder = "t856"
 ReceiveTimeout = 0.5
 
 [Cache]
 StaleAfterSeconds = 30.0
 DefaultDoorState = "unknown"
 CoalesceByFrame = true
-DoorCount = 4
+DoorCount = 6
 # MinIntervalPerPgnMs = 100
 # ProcessEveryNFrames = 1
 
 [Telemetry]
-TemperatureMode = "simulated"
+TemperatureMode = "can"
 SimTargetInside = 22.0
 SimTargetOutside = 15.0
 SimTickSeconds = 5.0
 SimStepC = 0.1
 SimMaxDriftC = 2.0
 
-# Example: DBC-based decoding (use Decoder = "dbc" or "bus-fms")
-# [Mapping]
-# dbc_path = "/path/to/vehicle.dbc"
-# [Mapping.signal_map]
-# door_1 = "Door1Open"
-# door_2 = "Door2Open"
-# reverse = "ReverseGear"
-# inside = "CabinTemp"
-# outside = "AmbientTemp"
+[Mapping.temperature]
+# Размер очереди для усреднения последних значений каждого выбранного датчика.
+queue-len = 5
+# true: усредняем все выбранные датчики салона в один inside.
+# false: разрешен только один датчик в sensors; иначе логируется ошибка и режим принудительно включается.
+average-all-zone = true
+# Какие датчики салона участвуют в расчете inside: "all" или список [1, 2].
+sensors = "all"
+# Что отдавать в API при неизвестном/устаревшем inside.
+# В TOML null-литерала нет; строка "null" трактуется как отсутствие значения.
+interior-default-value = "null"
+# Что отдавать в API при неизвестном/устаревшем outside.
+# В TOML null-литерала нет; строка "null" трактуется как отсутствие значения.
+exterior-default-value = "null"
+
+# Порог нормализации inside для API.
+interior-normalize-min = -40
+interior-normalize-max = 210
+# Значения, которые будут отданы в API если inside вышел за пороги.
+interior-normalize-fallback-min = -50
+interior-normalize-fallback-max = 250
+
+# Порог нормализации outside для API.
+exterior-normalize-min = -40
+exterior-normalize-max = 210
+# Значения, которые будут отданы в API если outside вышел за пороги.
+exterior-normalize-fallback-min = -50
+exterior-normalize-fallback-max = 250
+
+[Mapping.doors]
+# Двери: CAN 0x18FF6527, раскладка §2.6 PDF (opening/closed/closing на дверь).
+# API: close при активной «закрыта»; opening/closing => open.
+unknown-state = "unknown"
+
+[Mapping.ids]
+doors = ["0x18FF6527"]
+io = ["0x18FF6427"]
+# Температуру оставляем по спецификации T856 до подтверждения в шине.
+temperatures1 = ["0x18FF6227"]
+# arbitration-id: точное совпадение ID, pgn: совпадение по J1939 PGN.
+match-mode = "arbitration-id"
+
+[Mapping.reverse]
+# Код "Назад" в поле ETC2 (п.2.5 IO). Только при этом коде reverse=true.
+reverse-code = 124

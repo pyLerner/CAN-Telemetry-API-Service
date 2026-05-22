@@ -27,7 +27,9 @@ Returns service liveness status.
 
 ### `GET /api/telemetry/v1/doors/state`
 
-Returns current state of all doors.
+Returns current state of all doors.  
+For T856 decoder: states are decoded per door from CAN frame `0x18FF6527` (PDF §2.6:
+opening / closed / closing bit fields). Number of doors in API response is `1..Cache.DoorCount`.
 
 **Response** `200 OK`
 
@@ -37,7 +39,9 @@ Returns current state of all doors.
     "1": "close",
     "2": "open",
     "3": "close",
-    "4": "close"
+    "4": "close",
+    "5": "open",
+    "6": "close"
   }
 }
 ```
@@ -54,7 +58,8 @@ Returns current state of all doors.
 
 ### `GET /api/telemetry/v1/gear/state`
 
-Returns current reverse gear state.
+Returns current reverse gear state.  
+For T856 decoder: `reverse=true` only when ETC2 gear code equals `124` (Назад); otherwise `false`.
 
 **Response** `200 OK`
 
@@ -74,8 +79,13 @@ Returns current reverse gear state.
 
 ### `GET /api/telemetry/v1/temperature/state`
 
-Returns current temperature readings per zone.  
-Values drift ±0.1 °C every 5 s around the configured target (max ±2 °C).
+Returns current temperature readings per zone.
+
+For T856 decoder:
+- `inside` is calculated from Temperatures1 cabin sensors using queue average.
+- `outside` is calculated from Temperatures1 external field (`factor 0.03125`, `offset -273`) and averaged by queue.
+- API applies configurable normalization thresholds/fallbacks from `Mapping.temperature`.
+- In `System.debug=true`, logs contain values after calculation/averaging and before normalization.
 
 **Response** `200 OK`
 

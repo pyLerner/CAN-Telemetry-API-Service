@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 *.log
+!debug/20260521/*.log
 logs/
 NMEA-API-Service/
 NMEA-API-Service

@@ -26,8 +26,8 @@ def test_doors_unknown_when_never_updated(client: TestClient) -> None:
     r = client.get("/api/telemetry/v1/doors/state")
     assert r.status_code == 200
     doors = r.json()["doors"]
-    assert doors["1"] == "unknown"
-    assert doors["2"] == "unknown"
+    assert list(doors.keys()) == ["1", "2", "3", "4", "5", "6"]
+    assert all(v == "unknown" for v in doors.values())
 
 
 def test_doors_seeded(client_seeded: TestClient) -> None:
@@ -36,6 +36,10 @@ def test_doors_seeded(client_seeded: TestClient) -> None:
     doors = r.json()["doors"]
     assert doors["1"] == "close"
     assert doors["2"] == "open"
+    assert doors["3"] == "close"
+    assert doors["4"] == "close"
+    assert doors["5"] == "open"
+    assert doors["6"] == "close"
 
 
 def test_gear_state(client_seeded: TestClient) -> None:

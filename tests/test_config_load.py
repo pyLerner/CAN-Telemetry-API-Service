@@ -16,8 +16,10 @@ def test_load_example_config() -> None:
     cfg = load_config(root / "etc" / "telemetry-provider.toml")
     assert cfg.api.port == 7080
     assert cfg.can.bitrate == 250_000
-    assert cfg.can.decoder == "noop"
-    assert cfg.telemetry.temperature_mode == "simulated"
+    assert cfg.can.decoder == "t856"
+    assert cfg.telemetry.temperature_mode == "can"
+    assert cfg.system.debug is False
+    assert cfg.mapping["temperature"]["queue-len"] == 5
 
 
 if __name__ == "__main__":

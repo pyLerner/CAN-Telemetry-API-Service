@@ -38,6 +38,32 @@ uv run python src/main.py --config etc/telemetry-provider.toml
 
 Для тестов и разработки без CAN установите в конфиге `DisableCan = true` (секция `[System]`).
 
+## Docker (RK3568)
+
+Сборка и запуск в контейнере на плате с **host network** и SocketCAN **`can0`** (интерфейс поднимает **`can0-setup.service`** на хосте; контейнер только ждёт `can0` и читает шину).
+
+Подробности бандла для `/opt`: [docker/can-telemetry/README.md](docker/can-telemetry/README.md).
+
+### Первичный деплой
+
+```bash
+# 1. Установить etc/logs/data на хост
+sudo ./docker/can-telemetry/install-to-opt.sh
+
+# 2. Собрать образ на плате (BuildKit отключён для старого Docker)
+./docker/build-rk3568.sh
+
+# 3. Запустить
+docker compose -f docker/docker-compose.yml up -d
+
+# 4. Отключить нативный systemd-сервис приложения (can0-setup оставить)
+sudo systemctl disable --now can-telemetry.service
+```
+
+Проверка: `curl -s http://127.0.0.1:7080/api/ping`, логи: `/opt/can-telemetry/logs/can-telemetry.log`.
+
+Конфиг на плате: `/opt/can-telemetry/etc/telemetry-provider.toml` (шаблон в репозитории: [docker/can-telemetry/etc/telemetry-provider.toml](docker/can-telemetry/etc/telemetry-provider.toml)).
+
 ## Конфигурация
 
 Пример: [etc/telemetry-provider.toml](etc/telemetry-provider.toml).

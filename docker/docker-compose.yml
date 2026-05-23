@@ -1,0 +1,24 @@
+services:
+  can-telemetry-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      network: host
+    image: can-telemetry-api:0.1.0
+    container_name: can-telemetry-api
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      TZ: UTC
+      CAN_TELEMETRY_HOME: /app
+      CAN_IFACE: can0
+      CAN_WAIT_SECONDS: "30"
+    volumes:
+      - /opt/can-telemetry/etc:/app/etc:rw
+      - /opt/can-telemetry/logs:/app/logs:rw
+      - /opt/can-telemetry/data:/app/data:rw
+    user: "1000:1000"
+    command: ["python", "src/main.py", "--config", "/app/etc/telemetry-provider.toml"]

@@ -1,0 +1,67 @@
+# Docker / RK3568: конфиг для volume /opt/can-telemetry/etc → /app/etc
+# Справочник параметров: doc/CONFIGURATION.md
+
+[API]
+Host = "0.0.0.0"
+HTTP_Port = 7080
+Workers = 1
+
+[System]
+ProgramDirectory = "/app"
+LogDir = "/app/logs"
+DisableCan = false
+debug = false
+
+[CAN]
+Interface = "socketcan"
+Channel = "can0"
+Profile = "bus-fms"
+Bitrate = 250000
+FD = false
+Decoder = "t856"
+ReceiveTimeout = 0.5
+
+[Cache]
+StaleAfterSeconds = 30.0
+DefaultDoorState = "unknown"
+CoalesceByFrame = true
+DoorCount = 6
+
+[Telemetry]
+TemperatureMode = "can"
+SimTargetInside = 22.0
+SimTargetOutside = 15.0
+SimTickSeconds = 5.0
+SimStepC = 0.1
+SimMaxDriftC = 2.0
+
+[Mapping.temperature]
+queue-len = 5
+average-all-zone = true
+sensors = "all"
+interior-default-value = "null"
+exterior-default-value = "null"
+interior-normalize-min = -40
+interior-normalize-max = 210
+interior-normalize-fallback-min = -50
+interior-normalize-fallback-max = 250
+exterior-normalize-min = -40
+exterior-normalize-max = 210
+exterior-normalize-fallback-min = -50
+exterior-normalize-fallback-max = 250
+
+[Mapping.doors]
+unknown-state = "unknown"
+
+[Mapping.ids]
+doors = ["0x18FF6527"]
+io = ["0x18FF6427"]
+temperatures1 = ["0x18FF6227"]
+match-mode = "arbitration-id"
+
+[Mapping.reverse]
+reverse-code = 124
+
+# При Decoder = "dbc" / "bus-fms" укажите, например:
+# [Mapping]
+# dbc_path = "/app/data/bus-fms.dbc"

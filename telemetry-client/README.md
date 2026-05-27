@@ -37,7 +37,7 @@
 | `poll-interval-sec` | `1` | интервал опроса, сек |
 | `write-unknown-state` | `false` | писать переходы с/на `unknown` |
 | `write-initial-state` | `false` | записать все двери при первом опросе |
-| `timezone` | `utc` | `utc`, `locale` или IANA (`Europe/Moscow`) |
+| `timezone` | `utc` | `utc`, `local` или IANA (`Europe/Moscow`) |
 
 ## CLI
 
@@ -49,7 +49,7 @@
 | `--interval` | интервал опроса, сек |
 | `-i` / `--initial` | `true` / `false` — записать состояния при старте |
 | `-u` / `--unknown` | `true` / `false` — логировать `unknown` |
-| `-t` / `--timezone` | `utc`, `locale` или IANA-зона |
+| `-t` / `--timezone` | `utc`, `local` или IANA-зона |
 | `--help` | справка |
 
 Приоритет: дефолты → существующий `-c` (до перезаписи) → CLI.
@@ -68,7 +68,7 @@
 ### Часовой пояс
 
 - `utc` — UTC
-- `locale` — системная зона хоста (`/etc/localtime`)
+- `local` — системная зона хоста (`/etc/localtime`)
 - иначе — IANA, например `Europe/Moscow`
 
 ## Установка

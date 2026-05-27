@@ -151,7 +151,7 @@ def resolve_timezone(name: str) -> timezone | ZoneInfo:
     ----------
     name:
         * ``utc`` — UTC;
-        * ``locale`` — системная зона хоста (``/etc/localtime``);
+        * ``local`` — системная зона хоста (``/etc/localtime``);
         * иначе — имя зоны IANA, например ``Europe/Moscow``.
 
     Returns
@@ -162,7 +162,7 @@ def resolve_timezone(name: str) -> timezone | ZoneInfo:
     normalized = name.strip().lower()
     if normalized == "utc":
         return timezone.utc
-    if normalized == "locale":
+    if normalized == "local":
         # Пытаемся взять зону из текущего локального времени ОС
         try:
             tz_key = datetime.now().astimezone().tzinfo
@@ -510,7 +510,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "-t",
         dest="timezone",
         default=None,
-        help='часовой пояс: utc, locale или IANA, напр. Europe/Moscow',
+        help='часовой пояс: utc, local или IANA, напр. Europe/Moscow',
     )
     return parser.parse_args(argv)
 

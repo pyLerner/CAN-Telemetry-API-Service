@@ -1,0 +1,18 @@
+[Unit]
+Description=CAN Telemetry door state logger client
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=teamhd
+Group=teamhd
+WorkingDirectory=/opt/telemetry-client
+ExecStart=/usr/bin/python3 /opt/telemetry-client/door_logger.py -c /opt/telemetry-client/etc/client.ini
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

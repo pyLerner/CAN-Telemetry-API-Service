@@ -1,0 +1,11 @@
+# Пример INI для telemetry-client (справочная копия).
+# Боевой файл в репозитории: client.ini
+
+[client]
+api-server-host = 192.168.9.220
+api-server-port = 7080
+log-path = /opt/telemetry-client/logs/doors.log
+poll-interval-sec = 1
+write-unknown-state = false
+write-initial-state = false
+timezone = utc

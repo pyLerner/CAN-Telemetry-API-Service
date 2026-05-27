@@ -44,7 +44,15 @@ uv run python src/main.py --config etc/telemetry-provider.toml
 
 Подробности бандла для `/opt`: [docker/can-telemetry/README.md](docker/can-telemetry/README.md).
 
-### Первичный деплой
+### Удалённая установка (SSH)
+
+```bash
+./docker/install-remote.sh teamhd <host> [port]
+```
+
+Скрипт копирует проект на плату, ставит бандл в `/opt/can-telemetry`, собирает образ и поднимает compose. Пути на удалённом хосте — в начале [`docker/install-remote.sh`](docker/install-remote.sh).
+
+### Первичный деплой (на плате)
 
 ```bash
 # 1. Установить etc/logs/data на хост

@@ -18,6 +18,16 @@
 sudo ./docker/can-telemetry/install-to-opt.sh
 ```
 
+### Удалённая установка (SSH)
+
+С рабочей станции (нужны `ssh`, `rsync`):
+
+```bash
+./docker/install-remote.sh teamhd <host> [port]
+```
+
+По умолчанию порт SSH: **22**. Пути на плате заданы в начале `docker/install-remote.sh` (`REMOTE_PROJECT_DIR`, `REMOTE_OPT_DIR`).
+
 Или вручную:
 
 ```bash

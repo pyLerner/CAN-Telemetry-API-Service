@@ -8,4 +8,6 @@ log-path = /opt/telemetry-client/logs/doors.log
 poll-interval-sec = 1
 write-unknown-state = false
 write-initial-state = false
+# Секунды авто-закрытия open; 0 = выключено
+timeout = 0
 timezone = utc

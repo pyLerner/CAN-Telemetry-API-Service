@@ -5,16 +5,19 @@
 Назначение
 ----------
 Периодически опрашивает REST API сервиса телеметрии и дописывает в файл
-только те события, когда состояние двери **изменилось** (open / close / unknown).
+события при **изменении** состояния двери (open / close / unknown).
+
+Дополнительно поддерживается **timeout** для ``open``: если за заданное время
+от API не пришёл ``close``, клиент сам пишет синтетическое ``door N close``.
 
 Требования: Python 3.10+, только стандартная библиотека.
 
 Поведение логов
 ---------------
-* Файл door-log — только строки вида ``[YYYY-MM-DD HH:MM:SS] [INFO] door N <state>``.
+* Файл door-log — строки вида ``[YYYY-MM-DD HH:MM:SS] [INFO] door N <state>``.
 * Ошибки HTTP, сеть, парсинг JSON — в stderr (при systemd: ``journalctl``).
 * Первый опрос: по умолчанию только запоминает снимок; при ``write-initial-state = true``
-  записывает текущие состояния всех дверей в файл.
+  записывает текущие состояния всех дверей в файл (таймеры open не стартуют).
 
 Конфигурация
 ------------
@@ -32,6 +35,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -46,6 +50,7 @@ DEFAULT_LOG_PATH = "/opt/telemetry-client/logs/doors.log"
 DEFAULT_POLL_INTERVAL_SEC = 1.0
 DEFAULT_WRITE_UNKNOWN = False
 DEFAULT_WRITE_INITIAL = False
+DEFAULT_OPEN_TIMEOUT_SEC = 0
 DEFAULT_TIMEZONE = "utc"
 HTTP_TIMEOUT_SEC = 5.0
 
@@ -56,13 +61,30 @@ VALID_STATES = frozenset({"open", "close", "unknown"})
 logger = logging.getLogger("telemetry-client")
 
 
-def _stderr_handler() -> None:
+@dataclass
+class DoorState:
     """
-    Настроить вывод служебных сообщений только в stderr.
+    Состояние одной двери с точки зрения клиента.
 
-    Door-log пишется отдельно в файл; сюда попадают ошибки опроса,
-    старт/остановка и предупреждения о некорректных состояниях API.
+    effective
+        Текущее состояние для логики логирования (может отличаться от API
+        после синтетического ``close`` по timeout).
+    api_last
+        Предыдущий снимок API (для детекта ``close → open``).
+    open_deadline
+        Момент ``time.monotonic()``, когда истечёт таймер open; ``None`` если выключен.
+    awaiting_real_close
+        После синтетического ``close`` игнорируем API ``open`` до реального ``close``.
     """
+
+    effective: str
+    api_last: str | None
+    open_deadline: float | None = None
+    awaiting_real_close: bool = False
+
+
+def _stderr_handler() -> None:
+    """Настроить вывод служебных сообщений только в stderr."""
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     root = logging.getLogger()
@@ -72,26 +94,7 @@ def _stderr_handler() -> None:
 
 
 def _parse_bool(value: str | None, default: bool) -> bool:
-    """
-    Разобрать булево значение из строки INI или CLI.
-
-    Parameters
-    ----------
-    value:
-        Строка из конфига/аргумента. ``None`` — вернуть ``default``.
-    default:
-        Значение, если ``value`` не задан.
-
-    Returns
-    -------
-    bool
-        Распознанное логическое значение.
-
-    Raises
-    ------
-    ValueError
-        Если строка не похожа на true/false.
-    """
+    """Разобрать булево значение из строки INI или CLI."""
     if value is None:
         return default
     normalized = str(value).strip().lower()
@@ -102,20 +105,12 @@ def _parse_bool(value: str | None, default: bool) -> bool:
     raise ValueError(f"invalid boolean value: {value!r}")
 
 
+def _door_sort_key(door_id: str) -> tuple[int, str]:
+    return (int(door_id), door_id) if door_id.isdigit() else (10**9, door_id)
+
+
 def _load_existing_config(path: Path) -> dict[str, str]:
-    """
-    Прочитать существующий INI до его перезаписи при старте.
-
-    Parameters
-    ----------
-    path:
-        Путь к ``client.ini``.
-
-    Returns
-    -------
-    dict[str, str]
-        Пары ключ/значение из секции ``[client]`` или пустой словарь.
-    """
+    """Прочитать существующий INI до его перезаписи при старте."""
     if not path.is_file():
         return {}
     parser = configparser.ConfigParser()
@@ -126,16 +121,7 @@ def _load_existing_config(path: Path) -> dict[str, str]:
 
 
 def _write_config(path: Path, values: dict[str, str]) -> None:
-    """
-    Записать актуальный INI-конфиг (пересоздание файла при каждом запуске).
-
-    Parameters
-    ----------
-    path:
-        Целевой путь к конфигу.
-    values:
-        Итоговые параметры секции ``[client]``.
-    """
+    """Записать актуальный INI-конфиг (пересоздание файла при каждом запуске)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     parser = configparser.ConfigParser()
     parser["client"] = values
@@ -144,26 +130,11 @@ def _write_config(path: Path, values: dict[str, str]) -> None:
 
 
 def resolve_timezone(name: str) -> timezone | ZoneInfo:
-    """
-    Получить объект часового пояса для меток времени в door-log.
-
-    Parameters
-    ----------
-    name:
-        * ``utc`` — UTC;
-        * ``local`` — системная зона хоста (``/etc/localtime``);
-        * иначе — имя зоны IANA, например ``Europe/Moscow``.
-
-    Returns
-    -------
-    timezone | ZoneInfo
-        Объект для ``datetime.now(tz)``.
-    """
+    """Получить объект часового пояса для меток времени в door-log."""
     normalized = name.strip().lower()
     if normalized == "utc":
         return timezone.utc
     if normalized == "local":
-        # Пытаемся взять зону из текущего локального времени ОС
         try:
             tz_key = datetime.now().astimezone().tzinfo
             if isinstance(tz_key, ZoneInfo):
@@ -184,26 +155,7 @@ def resolve_timezone(name: str) -> timezone | ZoneInfo:
 
 
 def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
-    """
-    Собрать итоговые настройки и перезаписать INI на диске.
-
-    Алгоритм приоритета (по ТЗ):
-    1. Встроенные константы модуля.
-    2. Существующий файл по ``-c``, если он есть.
-    3. Явные аргументы командной строки.
-
-    Parameters
-    ----------
-    args:
-        Результат :func:`parse_args`.
-
-    Returns
-    -------
-    dict[str, Any]
-        Словарь с ключами ``host``, ``port``, ``log_path``,
-        ``poll_interval_sec``, ``write_unknown``, ``write_initial``,
-        ``timezone``, ``config_path``.
-    """
+    """Собрать итоговые настройки и перезаписать INI на диске."""
     config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
 
     settings: dict[str, str] = {
@@ -213,6 +165,7 @@ def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
         "poll-interval-sec": str(DEFAULT_POLL_INTERVAL_SEC),
         "write-unknown-state": "false" if not DEFAULT_WRITE_UNKNOWN else "true",
         "write-initial-state": "false" if not DEFAULT_WRITE_INITIAL else "true",
+        "timeout": str(DEFAULT_OPEN_TIMEOUT_SEC),
         "timezone": DEFAULT_TIMEZONE,
     }
 
@@ -221,7 +174,6 @@ def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
         if key in existing:
             settings[key] = existing[key]
 
-    # CLI перекрывает всё, что передано явно
     if args.host is not None:
         settings["api-server-host"] = args.host
     if args.port is not None:
@@ -234,12 +186,14 @@ def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
         settings["timezone"] = args.timezone
     if args.initial is not None:
         settings["write-initial-state"] = "true" if args.initial else "false"
+    if args.timeout is not None:
+        settings["timeout"] = str(args.timeout)
 
     _write_config(config_path, settings)
 
-    write_unknown = _parse_bool(settings["write-unknown-state"], DEFAULT_WRITE_UNKNOWN)
-    write_initial = _parse_bool(settings["write-initial-state"], DEFAULT_WRITE_INITIAL)
-    tz = resolve_timezone(settings["timezone"])
+    open_timeout_sec = int(settings["timeout"])
+    if open_timeout_sec < 0:
+        raise ValueError(f"timeout must be >= 0, got {open_timeout_sec}")
 
     return {
         "config_path": config_path,
@@ -247,40 +201,15 @@ def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
         "port": int(settings["api-server-port"]),
         "log_path": Path(settings["log-path"]),
         "poll_interval_sec": float(settings["poll-interval-sec"]),
-        "write_unknown": write_unknown,
-        "write_initial": write_initial,
-        "timezone": tz,
+        "write_unknown": _parse_bool(settings["write-unknown-state"], DEFAULT_WRITE_UNKNOWN),
+        "write_initial": _parse_bool(settings["write-initial-state"], DEFAULT_WRITE_INITIAL),
+        "open_timeout_sec": open_timeout_sec,
+        "timezone": resolve_timezone(settings["timezone"]),
     }
 
 
 def fetch_doors(host: str, port: int) -> dict[str, str]:
-    """
-    Запросить текущие состояния всех дверей у API.
-
-    Endpoint: ``GET /api/telemetry/v1/doors/state``.
-
-    Parameters
-    ----------
-    host:
-        Хост сервера телеметрии.
-    port:
-        Порт HTTP (по умолчанию 7080).
-
-    Returns
-    -------
-    dict[str, str]
-        Номер двери (строка) → нормализованное состояние
-        (``open``, ``close`` или ``unknown``).
-
-    Raises
-    ------
-    urllib.error.URLError
-        Сеть или HTTP-ошибка.
-    ValueError
-        Некорректный JSON или отсутствует объект ``doors``.
-    json.JSONDecodeError
-        Тело ответа не JSON.
-    """
+    """Запросить текущие состояния всех дверей у API."""
     url = f"http://{host}:{port}/api/telemetry/v1/doors/state"
     req = urllib.request.Request(url, method="GET")
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SEC) as resp:
@@ -305,34 +234,15 @@ def should_log_transition(
     *,
     write_unknown: bool,
 ) -> bool:
-    """
-    Решить, нужно ли записать строку в door-log при смене состояния.
-
-    Parameters
-    ----------
-    old:
-        Предыдущее состояние двери или ``None`` (ещё не было снимка).
-    new:
-        Новое состояние после опроса.
-    write_unknown:
-        Если ``False`` — логируются только переходы между ``open`` и ``close``.
-        Если ``True`` — дополнительно переходы с/на ``unknown``.
-
-    Returns
-    -------
-    bool
-        ``True``, если событие следует записать в файл.
-    """
+    """Решить, нужно ли записать строку в door-log при смене состояния."""
     if old is None:
         return False
     if old == new:
         return False
-    # open <-> close — всегда в лог
     if old in ("open", "close") and new in ("open", "close"):
         return True
     if not write_unknown:
         return False
-    # unknown учитывается только при write-unknown-state = true
     if old in ("open", "close") and new == "unknown":
         return True
     if old == "unknown" and new in ("open", "close"):
@@ -341,25 +251,19 @@ def should_log_transition(
 
 
 def format_door_line(door_id: str, state: str, tz: timezone | ZoneInfo) -> str:
-    """
-    Сформировать одну строку door-log в требуемом формате.
-
-    Parameters
-    ----------
-    door_id:
-        Номер двери (как в API, обычно ``"1"`` … ``"6"``).
-    state:
-        Состояние: ``open``, ``close`` или ``unknown``.
-    tz:
-        Часовой пояс для метки времени.
-
-    Returns
-    -------
-    str
-        Строка с переводом строки в конце, готовая к записи в файл.
-    """
+    """Сформировать одну строку door-log в требуемом формате."""
     ts = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
     return f"[{ts}] [INFO] door {door_id} {state}\n"
+
+
+def append_door_lines(lines: list[str], log_path: Path) -> None:
+    """Дописать строки door-log в файл."""
+    if not lines:
+        return
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as fh:
+        fh.writelines(lines)
+        fh.flush()
 
 
 def write_initial_states(
@@ -367,97 +271,109 @@ def write_initial_states(
     log_path: Path,
     tz: timezone | ZoneInfo,
 ) -> None:
-    """
-    Записать в door-log текущие состояния всех дверей (первый опрос при старте).
-
-    Parameters
-    ----------
-    current:
-        Снимок ``{door_id: state}`` с API.
-    log_path:
-        Путь к файлу лога.
-    tz:
-        Часовой пояс меток времени.
-    """
+    """Записать текущие состояния всех дверей (первый опрос при write-initial-state)."""
     if not current:
         return
+    lines = [
+        format_door_line(door_id, current[door_id], tz)
+        for door_id in sorted(current, key=_door_sort_key)
+    ]
+    append_door_lines(lines, log_path)
+
+
+def init_door_states(current: dict[str, str]) -> dict[str, DoorState]:
+    """Инициализировать состояния дверей из первого снимка API (без таймеров)."""
+    return {
+        door_id: DoorState(effective=state, api_last=state)
+        for door_id, state in current.items()
+    }
+
+
+def check_open_timeouts(
+    doors: dict[str, DoorState],
+    log_path: Path,
+    tz: timezone | ZoneInfo,
+) -> None:
+    """
+    Синтетическое закрытие дверей по истечении open-таймера.
+
+    Срабатывает, если ``open_deadline`` задан и текущее monotonic-время
+    его превысило. ``unknown`` от API таймер не отменяет.
+    """
+    now = time.monotonic()
     lines: list[str] = []
-    for door_id in sorted(current, key=lambda x: int(x) if x.isdigit() else x):
-        lines.append(format_door_line(door_id, current[door_id], tz))
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as fh:
-        fh.writelines(lines)
-        fh.flush()
+    for door_id in sorted(doors, key=_door_sort_key):
+        state = doors[door_id]
+        if state.open_deadline is None or now < state.open_deadline:
+            continue
+        lines.append(format_door_line(door_id, "close", tz))
+        state.effective = "close"
+        state.open_deadline = None
+        state.awaiting_real_close = True
+    append_door_lines(lines, log_path)
 
 
-def process_changes(
-    last: dict[str, str] | None,
+def apply_api_snapshot(
+    doors: dict[str, DoorState],
     current: dict[str, str],
     log_path: Path,
     tz: timezone | ZoneInfo,
     *,
     write_unknown: bool,
-    seed_only: bool,
-) -> dict[str, str]:
+    open_timeout_sec: int,
+) -> None:
     """
-    Сравнить снимки дверей и дописать изменения в файл.
+    Обработать новый снимок API с учётом timeout и awaiting_real_close.
 
-    Parameters
-    ----------
-    last:
-        Предыдущий снимок ``{door_id: state}`` или ``None``.
-    current:
-        Текущий снимок с API.
-    log_path:
-        Путь к door-log файлу.
-    tz:
-        Часовой пояс меток времени.
-    write_unknown:
-        Учитывать ли переходы через ``unknown`` (см. :func:`should_log_transition`).
-    seed_only:
-        Если ``True`` — только запомнить ``current``, в файл не писать
-        (первый успешный опрос после старта).
-
-    Returns
-    -------
-    dict[str, str]
-        Копия ``current`` для использования как ``last`` на следующей итерации.
+    Таймер open стартует только при ``api_last == close`` и API ``open``.
     """
-    if seed_only or last is None:
-        return dict(current)
-
     lines: list[str] = []
-    # Объединяем ключи: в ответе API могут появиться/исчезнуть номера дверей
-    all_ids = sorted(set(last) | set(current), key=lambda x: int(x) if x.isdigit() else x)
+    all_ids = sorted(set(doors) | set(current), key=_door_sort_key)
+
     for door_id in all_ids:
-        old = last.get(door_id)
-        new = current.get(door_id, "unknown")
-        if should_log_transition(old, new, write_unknown=write_unknown):
-            lines.append(format_door_line(door_id, new, tz))
+        api_state = current.get(door_id, "unknown")
+        if door_id not in doors:
+            doors[door_id] = DoorState(effective=api_state, api_last=None)
 
-    if lines:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("a", encoding="utf-8") as fh:
-            fh.writelines(lines)
-            fh.flush()
+        state = doors[door_id]
+        api_prev = state.api_last
 
-    return dict(current)
+        if state.awaiting_real_close:
+            if api_state == "close":
+                state.awaiting_real_close = False
+            state.api_last = api_state
+            continue
+
+        logged = False
+
+        if api_prev == "close" and api_state == "open":
+            lines.append(format_door_line(door_id, "open", tz))
+            state.effective = "open"
+            if open_timeout_sec > 0:
+                state.open_deadline = time.monotonic() + open_timeout_sec
+            logged = True
+        elif state.effective == "open" and api_state == "close":
+            lines.append(format_door_line(door_id, "close", tz))
+            state.effective = "close"
+            state.open_deadline = None
+            logged = True
+        elif should_log_transition(state.effective, api_state, write_unknown=write_unknown):
+            lines.append(format_door_line(door_id, api_state, tz))
+            state.effective = api_state
+            if api_state == "close":
+                state.open_deadline = None
+            logged = True
+
+        if not logged and api_state == "open" and state.effective == "open":
+            pass
+
+        state.api_last = api_state
+
+    append_door_lines(lines, log_path)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """
-    Разобрать аргументы командной строки.
-
-    Parameters
-    ----------
-    argv:
-        Список аргументов без имени программы; ``None`` — ``sys.argv[1:]``.
-
-    Returns
-    -------
-    argparse.Namespace
-        ``host``, ``port``, ``config``, ``interval``, ``initial``, ``unknown``, ``timezone``.
-    """
+    """Разобрать аргументы командной строки."""
 
     def _optional_bool(value: str) -> bool:
         return _parse_bool(value, False)
@@ -506,35 +422,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="логировать unknown: -u true / -u false (по умолчанию false)",
     )
     parser.add_argument(
+        "--timeout",
+        dest="timeout",
+        type=int,
+        default=None,
+        help="авто-закрытие open, сек (0 = выключено, по умолчанию 0)",
+    )
+    parser.add_argument(
         "--timezone",
         "-t",
         dest="timezone",
         default=None,
-        help='часовой пояс: utc, local или IANA, напр. Europe/Moscow',
+        help="часовой пояс: utc, local или IANA, напр. Europe/Moscow",
     )
     return parser.parse_args(argv)
 
 
 def run_loop(settings: dict[str, Any]) -> int:
-    """
-    Основной цикл опроса API до прерывания (Ctrl+C).
-
-    Parameters
-    ----------
-    settings:
-        Результат :func:`resolve_settings`.
-
-    Returns
-    -------
-    int
-        Код выхода: ``0`` при штатной остановке, ``1`` при ошибке конфигурации.
-    """
+    """Основной цикл опроса API до прерывания (Ctrl+C)."""
     host = settings["host"]
     port = settings["port"]
     log_path: Path = settings["log_path"]
     interval: float = settings["poll_interval_sec"]
     write_unknown: bool = settings["write_unknown"]
     write_initial: bool = settings["write_initial"]
+    open_timeout_sec: int = settings["open_timeout_sec"]
     tz = settings["timezone"]
 
     if interval <= 0:
@@ -543,35 +455,40 @@ def run_loop(settings: dict[str, Any]) -> int:
 
     logger.info(
         "starting door logger: %s:%s interval=%ss log=%s "
-        "write_unknown=%s write_initial=%s timezone=%s",
+        "write_unknown=%s write_initial=%s open_timeout=%ss timezone=%s",
         host,
         port,
         interval,
         log_path,
         write_unknown,
         write_initial,
+        open_timeout_sec,
         tz,
     )
 
-    last: dict[str, str] | None = None
+    doors: dict[str, DoorState] | None = None
     first_poll = True
 
     while True:
         try:
+            if doors is not None and open_timeout_sec > 0:
+                check_open_timeouts(doors, log_path, tz)
+
             current = fetch_doors(host, port)
-            if first_poll and write_initial:
-                write_initial_states(current, log_path, tz)
-                last = dict(current)
+            if first_poll:
+                if write_initial:
+                    write_initial_states(current, log_path, tz)
+                doors = init_door_states(current)
+                first_poll = False
             else:
-                last = process_changes(
-                    last,
+                apply_api_snapshot(
+                    doors,
                     current,
                     log_path,
                     tz,
                     write_unknown=write_unknown,
-                    seed_only=first_poll,
+                    open_timeout_sec=open_timeout_sec,
                 )
-            first_poll = False
         except urllib.error.URLError as exc:
             logger.error("HTTP request failed: %s", exc)
         except (json.JSONDecodeError, ValueError, OSError) as exc:
@@ -585,19 +502,7 @@ def run_loop(settings: dict[str, Any]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """
-    Точка входа: настройка логирования, конфиг, запуск цикла опроса.
-
-    Parameters
-    ----------
-    argv:
-        Аргументы командной строки; ``None`` — из ``sys.argv``.
-
-    Returns
-    -------
-    int
-        Код возврата для ``sys.exit``.
-    """
+    """Точка входа: настройка логирования, конфиг, запуск цикла опроса."""
     _stderr_handler()
     args = parse_args(argv)
     try:

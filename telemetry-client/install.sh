@@ -19,7 +19,7 @@ install -m 0755 "${SCRIPT_DIR}/door_logger.py" "${DEST}/door_logger.py"
 if [[ -f "${SCRIPT_DIR}/client.ini" ]]; then
   install -m 0644 "${SCRIPT_DIR}/client.ini" "${DEST}/etc/client.ini"
 else
-  echo "Ошибка: файл client.ini не найден в ${SCRIPT_DIR}"
+  echo "Ошибка: файл cient.ini не найден в ${SCRIPT_DIR}"
   exit 1
 fi
 if [[ -f "${SCRIPT_DIR}/client.ini.example" ]]; then

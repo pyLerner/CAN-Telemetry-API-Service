@@ -10,37 +10,57 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="/opt/telemetry-client"
 SYSTEMD_UNIT="/etc/systemd/system/telemetry-client.service"
-RUN_USER="teamhd"
-RUN_GROUP="teamhd"
+RUN_UID=1000
+RUN_GID=1000
+CLIENT_INI="${DEST}/etc/client.ini"
 
-echo "[1/5] Install files to ${DEST}"
-install -d -m 0755 "${DEST}/etc" "${DEST}/logs"
+_read_ini_log_path() {
+  local ini_file="$1"
+  grep -E '^[[:space:]]*log-path[[:space:]]*=' "${ini_file}" \
+    | tail -1 \
+    | sed 's/^[^=]*=[[:space:]]*//' \
+    | tr -d '\r'
+}
+
+echo "[1/6] Install files to ${DEST}"
+install -d -m 0755 "${DEST}/etc"
 install -m 0755 "${SCRIPT_DIR}/door_logger.py" "${DEST}/door_logger.py"
 if [[ -f "${SCRIPT_DIR}/client.ini" ]]; then
-  install -m 0644 "${SCRIPT_DIR}/client.ini" "${DEST}/etc/client.ini"
+  install -m 0644 "${SCRIPT_DIR}/client.ini" "${CLIENT_INI}"
 else
-  echo "Ошибка: файл cient.ini не найден в ${SCRIPT_DIR}"
+  echo "Ошибка: файл client.ini не найден в ${SCRIPT_DIR}"
   exit 1
 fi
 if [[ -f "${SCRIPT_DIR}/client.ini.example" ]]; then
   install -m 0644 "${SCRIPT_DIR}/client.ini.example" "${DEST}/client.ini.example"
 fi
 
-echo "[2/5] Install systemd unit"
+LOG_PATH="$(_read_ini_log_path "${CLIENT_INI}")"
+if [[ -z "${LOG_PATH}" ]]; then
+  echo "Ошибка: log-path не найден в ${CLIENT_INI}"
+  exit 1
+fi
+LOG_DIR="$(dirname "${LOG_PATH}")"
+
+echo "[2/6] Create log directory ${LOG_DIR}"
+install -d -m 0755 "${LOG_DIR}"
+chown -R "${RUN_UID}:${RUN_GID}" "${LOG_DIR}"
+
+echo "[3/6] Install systemd unit"
 install -m 0644 "${SCRIPT_DIR}/telemetry-client.service" "${SYSTEMD_UNIT}"
 
-echo "[3/5] Set ownership"
-chown -R "${RUN_USER}:${RUN_GROUP}" "${DEST}"
+echo "[4/6] Set ownership (${RUN_UID}:${RUN_GID})"
+chown -R "${RUN_UID}:${RUN_GID}" "${DEST}"
 
-echo "[4/5] Reload systemd"
+echo "[5/6] Reload systemd"
 systemctl daemon-reload
 
-echo "[5/5] Enable and start service"
+echo "[6/6] Enable and start service"
 systemctl enable telemetry-client.service
 systemctl restart telemetry-client.service
 
 echo
 echo "Installed telemetry-client."
-echo "  Door log: ${DEST}/logs/doors.log"
+echo "  Door log: ${LOG_PATH}"
 echo "  Journal:  journalctl -u telemetry-client -f"
 systemctl --no-pager --full status telemetry-client.service || true

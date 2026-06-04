@@ -4,10 +4,12 @@
 [client]
 api-server-host = 192.168.9.220
 api-server-port = 7080
-log-path = /opt/telemetry-client/logs/doors.log
-poll-interval-sec = 1
+log-path = /usr/local/Bus/Services/PasCounter/recv/recv.txt
+last-state-only = true
+poll-interval-sec = 0.3
 write-unknown-state = false
-write-initial-state = false
-# Секунды авто-закрытия open; 0 = выключено
-timeout = 0
-timezone = utc
+write-initial-state = true
+# last-state-only = true  — в файле по одной строке на дверь (обновление на месте)
+# last-state-only = false — каждое событие дописывается в конец файла
+timeout = 60
+timezone = local

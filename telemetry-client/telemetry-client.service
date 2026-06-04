@@ -5,8 +5,8 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=teamhd
-Group=teamhd
+User=1000
+Group=1000
 WorkingDirectory=/opt/telemetry-client
 ExecStart=/usr/bin/python3 /opt/telemetry-client/door_logger.py -c /opt/telemetry-client/etc/client.ini
 Restart=always

@@ -4,7 +4,7 @@
 
 Назначение
 ----------
-Периодически опрашивает REST API сервиса телеметрии и дописывает в файл
+Периодически опрашивает REST API сервиса телеметрии и записывает в файл
 события при **изменении** состояния двери (open / close / unknown).
 
 Дополнительно поддерживается **timeout** для ``open``: если за заданное время
@@ -16,8 +16,12 @@
 ---------------
 * Файл door-log — строки вида ``[YYYY-MM-DD HH:MM:SS] [INFO] door N <state>``.
 * Ошибки HTTP, сеть, парсинг JSON — в stderr (при systemd: ``journalctl``).
-* Первый опрос: по умолчанию только запоминает снимок; при ``write-initial-state = true``
-  записывает текущие состояния всех дверей в файл (таймеры open не стартуют).
+* При каждом запуске файл по ``log-path`` **пересоздаётся** (старые записи не сохраняются).
+* ``last-state-only = true`` — в файле всегда по одной строке на дверь; при смене
+  состояния обновляется только соответствующая строка.
+* ``last-state-only = false`` — каждое событие **дописывается** в конец файла.
+* Первый опрос: при ``write-initial-state = true`` записывает текущие состояния
+  всех дверей (таймеры open не стартуют); при ``false`` — только запоминает снимок.
 
 Конфигурация
 ------------
@@ -35,29 +39,29 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-# --- Пути и значения по умолчанию (совпадают с install.sh / systemd unit) ---
+# --- Пути и значения по умолчанию (совпадают с client.ini / install.sh) ---
 
 DEFAULT_CONFIG_PATH = Path("/opt/telemetry-client/etc/client.ini")
 DEFAULT_HOST = "192.168.9.220"
 DEFAULT_PORT = 7080
-DEFAULT_LOG_PATH = "/opt/telemetry-client/logs/doors.log"
-DEFAULT_POLL_INTERVAL_SEC = 1.0
+DEFAULT_LOG_PATH = "/usr/local/Bus/Services/PasCounter/recv/recv.txt"
+DEFAULT_POLL_INTERVAL_SEC = 0.3
 DEFAULT_WRITE_UNKNOWN = False
-DEFAULT_WRITE_INITIAL = False
-DEFAULT_OPEN_TIMEOUT_SEC = 0
-DEFAULT_TIMEZONE = "utc"
+DEFAULT_WRITE_INITIAL = True
+DEFAULT_LAST_STATE_ONLY = True
+DEFAULT_OPEN_TIMEOUT_SEC = 60
+DEFAULT_TIMEZONE = "local"
 HTTP_TIMEOUT_SEC = 5.0
 
-# Допустимые состояния согласно doc/API-TELEMETRY-V1.md
 VALID_STATES = frozenset({"open", "close", "unknown"})
 
-# Логгер для служебных сообщений (stderr), не для door-log файла
 logger = logging.getLogger("telemetry-client")
 
 
@@ -162,6 +166,7 @@ def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
         "api-server-host": DEFAULT_HOST,
         "api-server-port": str(DEFAULT_PORT),
         "log-path": DEFAULT_LOG_PATH,
+        "last-state-only": "true" if DEFAULT_LAST_STATE_ONLY else "false",
         "poll-interval-sec": str(DEFAULT_POLL_INTERVAL_SEC),
         "write-unknown-state": "false" if not DEFAULT_WRITE_UNKNOWN else "true",
         "write-initial-state": "false" if not DEFAULT_WRITE_INITIAL else "true",
@@ -188,6 +193,8 @@ def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
         settings["write-initial-state"] = "true" if args.initial else "false"
     if args.timeout is not None:
         settings["timeout"] = str(args.timeout)
+    if args.last_state_only is not None:
+        settings["last-state-only"] = "true" if args.last_state_only else "false"
 
     _write_config(config_path, settings)
 
@@ -203,6 +210,7 @@ def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
         "poll_interval_sec": float(settings["poll-interval-sec"]),
         "write_unknown": _parse_bool(settings["write-unknown-state"], DEFAULT_WRITE_UNKNOWN),
         "write_initial": _parse_bool(settings["write-initial-state"], DEFAULT_WRITE_INITIAL),
+        "last_state_only": _parse_bool(settings["last-state-only"], DEFAULT_LAST_STATE_ONLY),
         "open_timeout_sec": open_timeout_sec,
         "timezone": resolve_timezone(settings["timezone"]),
     }
@@ -256,29 +264,110 @@ def format_door_line(door_id: str, state: str, tz: timezone | ZoneInfo) -> str:
     return f"[{ts}] [INFO] door {door_id} {state}\n"
 
 
-def append_door_lines(lines: list[str], log_path: Path) -> None:
-    """Дописать строки door-log в файл."""
-    if not lines:
-        return
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as fh:
-        fh.writelines(lines)
-        fh.flush()
+class DoorLogWriter(ABC):
+    """Запись door-log: режим last-state-only или append."""
+
+    def __init__(self, log_path: Path) -> None:
+        self.log_path = log_path
+
+    def _ensure_parent(self) -> None:
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    @abstractmethod
+    def truncate(self) -> None:
+        """Пересоздать файл лога при старте программы."""
+
+    @abstractmethod
+    def write_initial(self, current: dict[str, str], tz: timezone | ZoneInfo) -> None:
+        """Записать начальные состояния всех дверей из первого опроса."""
+
+    @abstractmethod
+    def record_changes(
+        self,
+        updates: list[tuple[str, str]],
+        tz: timezone | ZoneInfo,
+    ) -> None:
+        """Записать одно или несколько изменений состояния."""
 
 
-def write_initial_states(
-    current: dict[str, str],
-    log_path: Path,
-    tz: timezone | ZoneInfo,
-) -> None:
-    """Записать текущие состояния всех дверей (первый опрос при write-initial-state)."""
-    if not current:
-        return
-    lines = [
-        format_door_line(door_id, current[door_id], tz)
-        for door_id in sorted(current, key=_door_sort_key)
-    ]
-    append_door_lines(lines, log_path)
+class LastStateLogWriter(DoorLogWriter):
+    """В файле всегда по одной строке на дверь; при изменении — полная перезапись."""
+
+    def __init__(self, log_path: Path) -> None:
+        super().__init__(log_path)
+        self._lines: dict[str, str] = {}
+
+    def truncate(self) -> None:
+        self._lines = {}
+        self._ensure_parent()
+        self.log_path.write_text("", encoding="utf-8")
+
+    def _flush(self) -> None:
+        self._ensure_parent()
+        if not self._lines:
+            self.log_path.write_text("", encoding="utf-8")
+            return
+        content = "".join(
+            self._lines[door_id]
+            for door_id in sorted(self._lines, key=_door_sort_key)
+        )
+        self.log_path.write_text(content, encoding="utf-8")
+
+    def write_initial(self, current: dict[str, str], tz: timezone | ZoneInfo) -> None:
+        if not current:
+            return
+        for door_id in sorted(current, key=_door_sort_key):
+            self._lines[door_id] = format_door_line(door_id, current[door_id], tz)
+        self._flush()
+
+    def record_changes(
+        self,
+        updates: list[tuple[str, str]],
+        tz: timezone | ZoneInfo,
+    ) -> None:
+        if not updates:
+            return
+        for door_id, state in updates:
+            self._lines[door_id] = format_door_line(door_id, state, tz)
+        self._flush()
+
+
+class AppendLogWriter(DoorLogWriter):
+    """Каждое событие дописывается в конец файла."""
+
+    def truncate(self) -> None:
+        self._ensure_parent()
+        self.log_path.write_text("", encoding="utf-8")
+
+    def write_initial(self, current: dict[str, str], tz: timezone | ZoneInfo) -> None:
+        if not current:
+            return
+        lines = [
+            format_door_line(door_id, current[door_id], tz)
+            for door_id in sorted(current, key=_door_sort_key)
+        ]
+        with self.log_path.open("a", encoding="utf-8") as fh:
+            fh.writelines(lines)
+            fh.flush()
+
+    def record_changes(
+        self,
+        updates: list[tuple[str, str]],
+        tz: timezone | ZoneInfo,
+    ) -> None:
+        if not updates:
+            return
+        lines = [format_door_line(door_id, state, tz) for door_id, state in updates]
+        with self.log_path.open("a", encoding="utf-8") as fh:
+            fh.writelines(lines)
+            fh.flush()
+
+
+def create_log_writer(log_path: Path, *, last_state_only: bool) -> DoorLogWriter:
+    """Создать writer для выбранного режима логирования."""
+    if last_state_only:
+        return LastStateLogWriter(log_path)
+    return AppendLogWriter(log_path)
 
 
 def init_door_states(current: dict[str, str]) -> dict[str, DoorState]:
@@ -291,7 +380,7 @@ def init_door_states(current: dict[str, str]) -> dict[str, DoorState]:
 
 def check_open_timeouts(
     doors: dict[str, DoorState],
-    log_path: Path,
+    log_writer: DoorLogWriter,
     tz: timezone | ZoneInfo,
 ) -> None:
     """
@@ -301,22 +390,22 @@ def check_open_timeouts(
     его превысило. ``unknown`` от API таймер не отменяет.
     """
     now = time.monotonic()
-    lines: list[str] = []
+    updates: list[tuple[str, str]] = []
     for door_id in sorted(doors, key=_door_sort_key):
         state = doors[door_id]
         if state.open_deadline is None or now < state.open_deadline:
             continue
-        lines.append(format_door_line(door_id, "close", tz))
+        updates.append((door_id, "close"))
         state.effective = "close"
         state.open_deadline = None
         state.awaiting_real_close = True
-    append_door_lines(lines, log_path)
+    log_writer.record_changes(updates, tz)
 
 
 def apply_api_snapshot(
     doors: dict[str, DoorState],
     current: dict[str, str],
-    log_path: Path,
+    log_writer: DoorLogWriter,
     tz: timezone | ZoneInfo,
     *,
     write_unknown: bool,
@@ -326,14 +415,19 @@ def apply_api_snapshot(
     Обработать новый снимок API с учётом timeout и awaiting_real_close.
 
     Таймер open стартует только при ``api_last == close`` и API ``open``.
+    Дверь, отсутствующая в ответе API, не обновляется (сохраняется последнее известное).
     """
-    lines: list[str] = []
+    updates: list[tuple[str, str]] = []
     all_ids = sorted(set(doors) | set(current), key=_door_sort_key)
 
     for door_id in all_ids:
-        api_state = current.get(door_id, "unknown")
+        if door_id not in current:
+            continue
+
+        api_state = current[door_id]
         if door_id not in doors:
-            doors[door_id] = DoorState(effective=api_state, api_last=None)
+            doors[door_id] = DoorState(effective=api_state, api_last=api_state)
+            continue
 
         state = doors[door_id]
         api_prev = state.api_last
@@ -347,18 +441,18 @@ def apply_api_snapshot(
         logged = False
 
         if api_prev == "close" and api_state == "open":
-            lines.append(format_door_line(door_id, "open", tz))
+            updates.append((door_id, "open"))
             state.effective = "open"
             if open_timeout_sec > 0:
                 state.open_deadline = time.monotonic() + open_timeout_sec
             logged = True
         elif state.effective == "open" and api_state == "close":
-            lines.append(format_door_line(door_id, "close", tz))
+            updates.append((door_id, "close"))
             state.effective = "close"
             state.open_deadline = None
             logged = True
         elif should_log_transition(state.effective, api_state, write_unknown=write_unknown):
-            lines.append(format_door_line(door_id, api_state, tz))
+            updates.append((door_id, api_state))
             state.effective = api_state
             if api_state == "close":
                 state.open_deadline = None
@@ -369,7 +463,7 @@ def apply_api_snapshot(
 
         state.api_last = api_state
 
-    append_door_lines(lines, log_path)
+    log_writer.record_changes(updates, tz)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -408,7 +502,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         type=_optional_bool,
         metavar="BOOL",
-        help="записать текущие состояния при старте: -i true / -i false (по умолчанию false)",
+        help="записать текущие состояния при старте: -i true / -i false",
     )
     parser.add_argument(
         "--unknown",
@@ -419,14 +513,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         type=_optional_bool,
         metavar="BOOL",
-        help="логировать unknown: -u true / -u false (по умолчанию false)",
+        help="логировать unknown: -u true / -u false",
+    )
+    parser.add_argument(
+        "--last-state-only",
+        "-l",
+        dest="last_state_only",
+        nargs="?",
+        const=True,
+        default=None,
+        type=_optional_bool,
+        metavar="BOOL",
+        help="режим одной строки на дверь: -l true / -l false",
     )
     parser.add_argument(
         "--timeout",
         dest="timeout",
         type=int,
         default=None,
-        help="авто-закрытие open, сек (0 = выключено, по умолчанию 0)",
+        help="авто-закрытие open, сек (0 = выключено)",
     )
     parser.add_argument(
         "--timezone",
@@ -446,6 +551,7 @@ def run_loop(settings: dict[str, Any]) -> int:
     interval: float = settings["poll_interval_sec"]
     write_unknown: bool = settings["write_unknown"]
     write_initial: bool = settings["write_initial"]
+    last_state_only: bool = settings["last_state_only"]
     open_timeout_sec: int = settings["open_timeout_sec"]
     tz = settings["timezone"]
 
@@ -453,13 +559,18 @@ def run_loop(settings: dict[str, Any]) -> int:
         logger.error("poll-interval-sec must be positive, got %s", interval)
         return 1
 
+    log_writer = create_log_writer(log_path, last_state_only=last_state_only)
+    log_writer.truncate()
+
     logger.info(
         "starting door logger: %s:%s interval=%ss log=%s "
-        "write_unknown=%s write_initial=%s open_timeout=%ss timezone=%s",
+        "last_state_only=%s write_unknown=%s write_initial=%s "
+        "open_timeout=%ss timezone=%s",
         host,
         port,
         interval,
         log_path,
+        last_state_only,
         write_unknown,
         write_initial,
         open_timeout_sec,
@@ -472,19 +583,19 @@ def run_loop(settings: dict[str, Any]) -> int:
     while True:
         try:
             if doors is not None and open_timeout_sec > 0:
-                check_open_timeouts(doors, log_path, tz)
+                check_open_timeouts(doors, log_writer, tz)
 
             current = fetch_doors(host, port)
             if first_poll:
-                if write_initial:
-                    write_initial_states(current, log_path, tz)
                 doors = init_door_states(current)
+                if write_initial:
+                    log_writer.write_initial(current, tz)
                 first_poll = False
             else:
                 apply_api_snapshot(
                     doors,
                     current,
-                    log_path,
+                    log_writer,
                     tz,
                     write_unknown=write_unknown,
                     open_timeout_sec=open_timeout_sec,

@@ -109,13 +109,23 @@ sudo ./install.sh
 
 ### Удалённая установка (SSH)
 
+**Host из `~/.ssh/config`** (рекомендуется):
+
+```bash
+./telemetry-client/install-remote.sh <Host>
+```
+
+OpenSSH подставляет `User`, `HostName`, `Port`, ключи и прочие опции из config. Staging: `/home/<User>/telemetry-client`.
+
+**Явные user и host** (как раньше):
+
 ```bash
 ./telemetry-client/install-remote.sh orangepi <host> [port]
 ```
 
-Порт SSH: **22**. Пути и адрес API — в начале [`install-remote.sh`](install-remote.sh).
+Порт SSH по умолчанию: **22**. Пути и адрес API — в начале [`install-remote.sh`](install-remote.sh).
 
-При установке по SSH потребуется **пароль sudo** на плате (или настройте passwordless sudo для пользователя `orangepi`).
+При установке по SSH потребуется **пароль sudo** на плате (или настройте passwordless sudo для удалённого пользователя).
 
 ### Проверка
 

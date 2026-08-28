@@ -58,7 +58,14 @@ def open_port(port: str, baudrate: int, timeout: float) -> serial.rs485.RS485:
     return ser
 
 
-def read_response(ser: serial.rs485.RS485, timeout: float) -> bytes:
+def format_raw_debug(data: bytes) -> str:
+    if not data:
+        return "len=0 (empty)"
+    ascii_text = data.decode("ascii", errors="replace")
+    return f"len={len(data)} ascii={ascii_text!r} hex={data.hex(' ')}"
+
+
+def read_response(ser: serial.rs485.RS485, timeout: float) -> tuple[bytes, bytes]:
     deadline = time.monotonic() + timeout
     buffer = bytearray()
 
@@ -69,11 +76,11 @@ def read_response(ser: serial.rs485.RS485, timeout: float) -> bytes:
             text = buffer.decode("ascii", errors="replace")
             match = RESPONSE_SEARCH_RE.search(text)
             if match:
-                return match.group(0).encode("ascii")
+                return match.group(0).encode("ascii"), bytes(buffer)
         else:
             time.sleep(0.005)
 
-    return b""
+    return b"", bytes(buffer)
 
 
 def parse_response(raw: bytes) -> tuple[str, str, list[str]]:
@@ -85,7 +92,7 @@ def parse_response(raw: bytes) -> tuple[str, str, list[str]]:
     return addr, doors_hex, decode_doors(doors_hex)
 
 
-def poll_device(ser: serial.rs485.RS485, device_id: str, timeout: float) -> None:
+def poll_device(ser: serial.rs485.RS485, device_id: str, timeout: float, *, debug: bool = False) -> None:
     request = make_request(device_id)
     print(f"{ts()} TX -> {request.decode('ascii')}")
 
@@ -93,19 +100,25 @@ def poll_device(ser: serial.rs485.RS485, device_id: str, timeout: float) -> None
     ser.write(request)
     ser.flush()
 
-    raw = read_response(ser, timeout)
+    raw, raw_buffer = read_response(ser, timeout)
     if not raw:
         print(f"{ts()} RX <- (timeout, no valid response)")
+        if debug:
+            print(f"{ts()}     debug raw: {format_raw_debug(raw_buffer)}")
         return
 
     text = raw.decode("ascii", errors="replace")
     print(f"{ts()} RX <- {text}")
+    if debug and raw_buffer != raw:
+        print(f"{ts()}     debug raw: {format_raw_debug(raw_buffer)}")
 
     try:
         addr, doors_hex, doors = parse_response(raw)
         print(f"{ts()}     addr={addr} doors_hex={doors_hex} doors={doors}")
     except ValueError as exc:
         print(f"{ts()}     parse error: {exc}")
+        if debug:
+            print(f"{ts()}     debug raw: {format_raw_debug(raw_buffer)}")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -118,6 +131,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--devices",
         default=",".join(DEFAULT_DEVICES),
         help=f"Comma-separated device IDs (default: {','.join(DEFAULT_DEVICES)})",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print raw RX buffer (ascii + hex) on timeout or parse errors",
     )
     return parser.parse_args(argv)
 
@@ -132,13 +150,14 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"RS-485 poll test: port={args.port} baud={args.baudrate} "
         f"devices={devices} interval={args.interval}s timeout={args.timeout}s"
+        f"{' debug=on' if args.debug else ''}"
     )
 
     ser = open_port(args.port, args.baudrate, args.timeout)
     try:
         while True:
             for device_id in devices:
-                poll_device(ser, device_id, args.timeout)
+                poll_device(ser, device_id, args.timeout, debug=args.debug)
             print(f"--- cycle done, next in {args.interval}s ---")
             time.sleep(args.interval)
     except KeyboardInterrupt:

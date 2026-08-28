@@ -19,6 +19,7 @@ DEFAULT_TIMEOUT = 0.5
 DEFAULT_DEVICES = ("1A01", "1A02")
 
 RESPONSE_RE = re.compile(r"^\{([0-9A-Fa-f]{4});([0-9A-Fa-f]{6})\}$")
+RESPONSE_SEARCH_RE = re.compile(r"\{[0-9A-Fa-f]{4};[0-9A-Fa-f]{6}\}")
 DOOR_LABELS = {"00": "close", "FF": "open"}
 
 
@@ -59,18 +60,20 @@ def open_port(port: str, baudrate: int, timeout: float) -> serial.rs485.RS485:
 
 def read_response(ser: serial.rs485.RS485, timeout: float) -> bytes:
     deadline = time.monotonic() + timeout
-    chunks: list[bytes] = []
+    buffer = bytearray()
 
     while time.monotonic() < deadline:
         chunk = ser.read(ser.in_waiting or 1)
         if chunk:
-            chunks.append(chunk)
-            if b"}" in chunk:
-                break
+            buffer.extend(chunk)
+            text = buffer.decode("ascii", errors="replace")
+            match = RESPONSE_SEARCH_RE.search(text)
+            if match:
+                return match.group(0).encode("ascii")
         else:
             time.sleep(0.005)
 
-    return b"".join(chunks)
+    return b""
 
 
 def parse_response(raw: bytes) -> tuple[str, str, list[str]]:
@@ -92,7 +95,7 @@ def poll_device(ser: serial.rs485.RS485, device_id: str, timeout: float) -> None
 
     raw = read_response(ser, timeout)
     if not raw:
-        print(f"{ts()} RX <- (timeout, no data)")
+        print(f"{ts()} RX <- (timeout, no valid response)")
         return
 
     text = raw.decode("ascii", errors="replace")
